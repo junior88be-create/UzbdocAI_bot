@@ -1,0 +1,99 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: doc_ai
+      POSTGRES_PASSWORD: doc_ai
+      POSTGRES_DB: doc_ai_bot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U doc_ai -d doc_ai_bot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://doc_ai:doc_ai@postgres:5432/doc_ai_bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+
+  bot:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://doc_ai:doc_ai@postgres:5432/doc_ai_bot
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - storage_data:/app/storage
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    command: ["python", "-m", "app.main"]
+    restart: unless-stopped
+
+  worker:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://doc_ai:doc_ai@postgres:5432/doc_ai_bot
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - storage_data:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    restart: unless-stopped
+
+  beat:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://doc_ai:doc_ai@postgres:5432/doc_ai_bot
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - storage_data:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: ["celery", "-A", "app.worker.celery_app", "beat", "--loglevel=INFO"]
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  storage_data:

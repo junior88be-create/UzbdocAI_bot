@@ -1,0 +1,49 @@
+"""Tests that the prompt-construction functions include the guidance they
+are supposed to - not a test of Gemini's actual output (no network call).
+"""
+
+from __future__ import annotations
+
+from app.services.prompts import build_text_structuring_prompt, build_vision_extraction_prompt
+
+
+def test_vision_prompt_includes_uzbek_script_guidance():
+    prompt = build_vision_extraction_prompt(page_numbers=[1], is_handwritten_hint=True)
+
+    # Cyrillic look-alike pairs that are easy to misread in handwriting.
+    for letter_pair in ("Ў", "Қ", "Ғ", "Ҳ"):
+        assert letter_pair in prompt
+
+    # The Latin apostrophe-letter guidance (oʻ/gʻ) must instruct preserving
+    # the writer's actual glyph rather than normalizing it.
+    assert "o'" in prompt or "oʻ" in prompt
+    assert "do NOT normalize" in prompt or "Do NOT normalize" in prompt
+
+
+def test_vision_prompt_includes_handwriting_caution_when_hinted():
+    prompt = build_vision_extraction_prompt(page_numbers=[1], is_handwritten_hint=True)
+    assert "handwriting" in prompt.lower()
+
+    prompt_without_hint = build_vision_extraction_prompt(page_numbers=[1], is_handwritten_hint=False)
+    assert "inherently uncertain" not in prompt_without_hint
+
+
+def test_vision_prompt_includes_page_numbers():
+    prompt = build_vision_extraction_prompt(page_numbers=[3, 4, 5], is_handwritten_hint=False)
+    assert "3, 4, 5" in prompt
+
+
+def test_text_structuring_prompt_does_not_duplicate_vision_only_guidance():
+    # The Uzbek script/handwriting guidance is about *visual* recognition
+    # ambiguity - irrelevant once PyMuPDF has already decoded the text layer
+    # to real Unicode characters, so it must not bloat this prompt.
+    prompt = build_text_structuring_prompt({1: "Some already-decoded text."}, "file.pdf")
+    assert "breve" not in prompt
+    assert "descender" not in prompt
+
+
+def test_core_rules_forbid_inventing_content_in_both_prompts():
+    text_prompt = build_text_structuring_prompt({1: "text"}, "file.pdf")
+    vision_prompt = build_vision_extraction_prompt(page_numbers=[1], is_handwritten_hint=False)
+    for prompt in (text_prompt, vision_prompt):
+        assert "Never invent or guess" in prompt

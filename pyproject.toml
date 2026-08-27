@@ -1,0 +1,27 @@
+[project]
+name = "document-ai-bot"
+version = "0.1.0"
+description = "Telegram bot that converts PDFs, scans, and handwritten documents into structured DOCX/XLSX/Markdown using Google Gemini."
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# E501: line length is handled by review, not a hard gate.
+# UP042: (str, Enum) is used intentionally (SQLAlchemy SAEnum + Pydantic both
+# handle it uniformly); enum.StrEnum has subtly different str()/formatting
+# behavior that isn't worth the churn to chase here.
+ignore = ["E501", "UP042"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+disallow_untyped_defs = false
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
