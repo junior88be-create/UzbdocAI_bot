@@ -8,6 +8,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 class MainMenuCallback:
     UPLOAD_DOCUMENT = "menu:upload_document"
     UPLOAD_IMAGE = "menu:upload_image"
+    UPLOAD_VOICE = "menu:upload_voice"
     CREATE_DOCX = "menu:create_docx"
     CREATE_XLSX = "menu:create_xlsx"
     CREATE_MD = "menu:create_md"
@@ -33,6 +34,9 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="📝 Markdown яратиш", callback_data=MainMenuCallback.CREATE_MD),
             InlineKeyboardButton(text="🔄 Авто формат", callback_data=MainMenuCallback.AUTO_FORMAT),
+        ],
+        [
+            InlineKeyboardButton(text="🎙 Овоз/аудиони матнга ўгириш", callback_data=MainMenuCallback.UPLOAD_VOICE),
         ],
         [
             InlineKeyboardButton(text="📦 Пакетли қайта ишлаш", callback_data=MainMenuCallback.BATCH),

@@ -12,15 +12,16 @@ from app.bot.utils import editable_message
 router = Router(name="start")
 
 _WELCOME = (
-    "👋 <b>Document AI Bot</b>'га хуш келибсиз.\n\n"
-    "Менга PDF, сканланган ҳужжат ёки расм (JPG/PNG) юборинг - қўлёзма "
-    "матнлар ҳам мумкин - мен уни сарлавҳалар, хатбошилар, жадваллар, "
-    "рўйхатлар, саналар, исмлар ва ҳужжат рақамларини имкон қадар аниқ "
-    "сақлаган ҳолда тузилган DOCX, Excel ёки Markdown файлига айлантираман.\n\n"
-    "🎙 Овозли хабар ёки аудио файл юборсангиз, уни ўзбек (кирилл/лотин) "
-    "ёки рус тилида саводли матнга айлантириб, сўзловчилар ва вақт "
-    "белгилари билан Word файли сифатида қайтараман.\n\n"
-    "Пастдаги тугмалардан бирини танланг ёки шунчаки файл/овоз юборинг."
+    "👋 Салом! Мен <b>Document AI Bot</b>ман.\n\n"
+    "Мен нима қила оламан:\n\n"
+    "📄 <b>Ҳужжатни рақамлаштириш</b> - PDF, сканланган ҳужжат ёки расм "
+    "(қўлёзма ҳам бўлаверади) юборинг - мен уни DOCX, Excel ёки Markdown "
+    "файлига айлантираман.\n\n"
+    "🎙 <b>Овозни матнга ўгириш</b> - овозли хабар ёки аудио файл юборинг - "
+    "мен уни ёзма матнга айлантириб, сўзловчи ва вақтини кўрсатган ҳолда "
+    "Word файли қилиб қайтараман.\n\n"
+    "Бошлаш учун шунчаки менга файл, расм ёки овоз юборинг - ёки пастдаги "
+    "тугмалардан фойдаланинг."
 )
 
 _HELP = (
@@ -113,6 +114,14 @@ async def cb_upload_image(callback: CallbackQuery) -> None:
     message = editable_message(callback)
     if message is not None:
         await message.answer("📷 Энди менга расм (JPG/PNG) юборинг.")
+    await callback.answer()
+
+
+@router.callback_query(F.data == MainMenuCallback.UPLOAD_VOICE)
+async def cb_upload_voice(callback: CallbackQuery) -> None:
+    message = editable_message(callback)
+    if message is not None:
+        await message.answer("🎙 Энди менга овозли хабар ёки аудио файл юборинг.")
     await callback.answer()
 
 
