@@ -27,6 +27,17 @@ _UNAUTHORIZED_MESSAGE = (
     "⛔ Сизга ушбу ботдан фойдаланишга рухсат берилмаган. "
     "Кириш ҳуқуқини сўраш учун администратор билан боғланинг."
 )
+# Sent as a regular reply (Message events only - see _reject) rather than
+# reused for the CallbackQuery alert path: Telegram caps a callback-query
+# answer's alert text at 200 characters, which this step-by-step guidance
+# would exceed.
+_UNAUTHORIZED_MESSAGE_DETAILED = (
+    "⛔ <b>Сизга ушбу ботдан фойдаланишга рухсат берилмаган.</b>\n\n"
+    "Рухсат олиш учун:\n"
+    "1. @userinfobot орқали ўзингизнинг Telegram ID рақамингизни билиб олинг.\n"
+    "2. Ушбу ID рақамингизни администратор @bekzod_eshniyazov'га юборинг.\n\n"
+    "Администратор сизни рўйхатга қўшгандан сўнг ботдан фойдалана оласиз."
+)
 _DISABLED_MESSAGE = "⛔ Сизнинг ботдан фойдаланиш ҳуқуқингиз администратор томонидан ўчирилган."
 
 
@@ -45,7 +56,7 @@ class AccessControlMiddleware(BaseMiddleware):
         telegram_id = telegram_user.id
 
         if not settings.is_allowed(telegram_id):
-            await self._reject(event, _UNAUTHORIZED_MESSAGE)
+            await self._reject(event, _UNAUTHORIZED_MESSAGE, _UNAUTHORIZED_MESSAGE_DETAILED)
             return None
 
         role = UserRole.ADMIN if settings.is_admin(telegram_id) else UserRole.USER
@@ -72,15 +83,18 @@ class AccessControlMiddleware(BaseMiddleware):
         return await handler(event, data)
 
     @staticmethod
-    async def _reject(event: TelegramObject, message: str) -> None:
+    async def _reject(event: TelegramObject, alert_message: str, detailed_message: str | None = None) -> None:
         # This middleware is registered per-event-type (dispatcher.message /
         # dispatcher.callback_query), so `event` is always one of these two -
-        # never a bare Update.
+        # never a bare Update. CallbackQuery always gets the short
+        # alert_message (Telegram caps alert text at 200 characters); a
+        # Message gets detailed_message when the caller provides one, since
+        # a regular reply has no such limit.
         try:
             if isinstance(event, CallbackQuery):
-                await event.answer(message, show_alert=True)
+                await event.answer(alert_message, show_alert=True)
             elif isinstance(event, Message):
-                await event.reply(message)
+                await event.reply(detailed_message or alert_message)
         except Exception:
             logger.debug("Could not deliver rejection message to unauthorized user")
 
