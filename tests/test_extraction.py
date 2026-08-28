@@ -160,6 +160,28 @@ def test_gemini_service_validate_rejects_malformed_json():
         service._validate("{this is not valid json")
 
 
+@pytest.mark.asyncio
+async def test_transcribe_audio_requests_plain_text_and_strips_result():
+    service = GeminiService.__new__(GeminiService)
+    captured = {}
+
+    async def fake_generate(contents, *, response_schema=DocumentResult):
+        captured["contents"] = contents
+        captured["response_schema"] = response_schema
+        return "  Salom, bu sinov matni.  \n"
+
+    service._generate = fake_generate  # type: ignore[method-assign]
+
+    result = await service.transcribe_audio(b"fake-audio-bytes", "audio/ogg")
+
+    assert result == "Salom, bu sinov matni."
+    # A plain transcript has no JSON shape to validate against - passing
+    # response_schema=None must switch _generate to text/plain mode instead
+    # of trying to force the DocumentResult JSON schema onto free text.
+    assert captured["response_schema"] is None
+    assert len(captured["contents"]) == 2
+
+
 class _FakeCandidate:
     def __init__(self, finish_reason):
         self.finish_reason = finish_reason

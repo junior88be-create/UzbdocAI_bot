@@ -4,7 +4,11 @@ are supposed to - not a test of Gemini's actual output (no network call).
 
 from __future__ import annotations
 
-from app.services.prompts import build_text_structuring_prompt, build_vision_extraction_prompt
+from app.services.prompts import (
+    build_text_structuring_prompt,
+    build_vision_extraction_prompt,
+    build_voice_transcription_prompt,
+)
 
 
 def test_vision_prompt_includes_uzbek_script_guidance():
@@ -47,3 +51,34 @@ def test_core_rules_forbid_inventing_content_in_both_prompts():
     vision_prompt = build_vision_extraction_prompt(page_numbers=[1], is_handwritten_hint=False)
     for prompt in (text_prompt, vision_prompt):
         assert "Never invent or guess" in prompt
+
+
+def test_voice_prompt_requires_grammatical_normalization():
+    prompt = build_voice_transcription_prompt()
+    assert "grammatical and orthographic" in prompt
+
+
+def test_voice_prompt_allows_contextual_reconstruction_of_unclear_audio():
+    prompt = build_voice_transcription_prompt()
+    assert "reconstruct the most logical wording" in prompt
+
+
+def test_voice_prompt_forbids_fabricating_unspoken_content():
+    prompt = build_voice_transcription_prompt()
+    assert "Never add information" in prompt
+    assert "never invent content that was not" in prompt
+
+
+def test_voice_prompt_handles_silence_as_empty_string():
+    prompt = build_voice_transcription_prompt()
+    assert "output an empty string" in prompt
+
+
+def test_voice_prompt_does_not_reuse_document_json_schema_language():
+    # This is a plain-text transcription prompt, not the structured
+    # DocumentResult JSON extraction prompt - it must not carry over the
+    # document-specific output-shape instructions.
+    prompt = build_voice_transcription_prompt()
+    assert "text_blocks" not in prompt
+    assert "response_schema" not in prompt
+    assert "headings" not in prompt

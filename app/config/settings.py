@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     max_pdf_pages: int = Field(default=60)
     max_batch_size: int = Field(default=10)
     storage_root: str = Field(default="storage")
+    # Voice/audio transcription: a bot-level sanity cap independent of
+    # Telegram's own limits, to bound per-request Gemini audio-processing
+    # cost/latency (Gemini itself accepts much longer audio).
+    max_voice_duration_seconds: int = Field(default=600)
 
     # --- Logging ---
     log_level: str = Field(default="INFO")

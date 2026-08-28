@@ -18,7 +18,17 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from aiohttp import web
 from fastapi import FastAPI
 
-from app.bot.handlers import admin, batch, conversion, document, history, review, search, start
+from app.bot.handlers import (
+    admin,
+    batch,
+    conversion,
+    document,
+    history,
+    review,
+    search,
+    start,
+    voice,
+)
 from app.bot.handlers import settings as settings_handlers
 from app.bot.middlewares import AccessControlMiddleware
 from app.config.logging import setup_logging
@@ -53,6 +63,7 @@ def build_dispatcher() -> Dispatcher:
     # document's plain upload handlers otherwise - see batch.py docstring.
     dispatcher.include_router(batch.router)
     dispatcher.include_router(document.router)
+    dispatcher.include_router(voice.router)
     # review is state-filtered (ReviewFlow) the same way batch is - it must
     # come before any plain-text/message catch-alls, though in practice its
     # own filters are specific enough that order relative to conversion

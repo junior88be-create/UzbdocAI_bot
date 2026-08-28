@@ -70,7 +70,7 @@ class StoredDocument:
     reuse_note: str
 
 
-async def _download(message: Message, file_id: str) -> bytes:
+async def download_telegram_file(message: Message, file_id: str) -> bytes:
     assert message.bot is not None  # always set by the dispatcher for incoming updates
     bot_file = await message.bot.get_file(file_id)
     if not bot_file.file_path:
@@ -108,7 +108,7 @@ async def receive_document_upload(message: Message) -> ValidatedUpload | None:
     status_message = await message.reply("⏳ Ҳужжат юкланмоқда...")
 
     try:
-        file_bytes = await _download(message, document.file_id)
+        file_bytes = await download_telegram_file(message, document.file_id)
     except Exception:
         logger.exception("Telegram file download failed")
         await status_message.edit_text("❌ Файлни юклаб бўлмади. Илтимос, қайта уриниб кўринг.")
@@ -145,7 +145,7 @@ async def receive_photo_upload(message: Message) -> ValidatedUpload | None:
     status_message = await message.reply("⏳ Расм юкланмоқда...")
 
     try:
-        file_bytes = await _download(message, photo.file_id)
+        file_bytes = await download_telegram_file(message, photo.file_id)
     except Exception:
         logger.exception("Telegram file download failed")
         await status_message.edit_text("❌ Файлни юклаб бўлмади. Илтимос, қайта уриниб кўринг.")

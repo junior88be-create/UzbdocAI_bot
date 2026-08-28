@@ -157,6 +157,31 @@ Consistent with the retention/privacy design: when a document expires
 generated column derived from it, the document's *content* stops being searchable
 automatically (only its filename remains matchable), without any extra cleanup code.
 
+### Voice/audio transcription
+
+Sending a Telegram voice message (🎙) or an audio file is handled entirely
+separately from the document pipeline (`app/bot/handlers/voice.py`): the bot
+downloads the audio and sends it directly to Gemini for transcription - no
+Celery task, no `Document` row, nothing written to disk, since transcription
+is a single async I/O-bound call with no CPU-bound preprocessing step (unlike
+PDF page rendering).
+
+The transcription prompt (`prompts.build_voice_transcription_prompt`) is
+deliberately **not** the document-extraction prompt with different input -
+it enforces the opposite instinct on purpose:
+
+- Output follows standard Uzbek (Cyrillic or Latin) or Russian literary
+  grammar/spelling, not a verbatim phonetic rendering.
+- Noisy/unclear audio is reconstructed from surrounding context into
+  coherent text, rather than preserved as-is or flagged uncertain.
+- Content that was never actually spoken is still never invented - context
+  may only fill in *how* something noisy was likely said, not *what* wasn't
+  said at all. A section with no intelligible speech comes back as an empty
+  string, which the bot reports directly rather than guessing.
+
+Short transcripts are sent as a plain (HTML-escaped) chat message; long ones
+are sent as a `.txt` file instead of being split into several messages.
+
 ## 2. Requirements
 
 - Python 3.12+ (developed/tested here on 3.14; both are supported)
@@ -204,6 +229,7 @@ Copy `.env.example` to `.env` and fill in real values. Never commit `.env`.
 | `FILE_RETENTION_HOURS` | How long uploaded/generated files live before cleanup deletes them |
 | `MAX_PDF_PAGES` | Hard cap on pages per PDF (cost + abuse control) |
 | `MAX_BATCH_SIZE` | Max number of files collected into one 📦 batch |
+| `MAX_VOICE_DURATION_SECONDS` | Max accepted duration for a 🎙 voice/audio message |
 | `LOG_LEVEL` | Standard Python logging level |
 
 ## 6. Local installation
@@ -394,7 +420,7 @@ app/
   main.py                    entrypoint: aiogram dispatcher + FastAPI health server
   config/settings.py         pydantic-settings config (all env vars, no hard-coded secrets/models)
   config/logging.py          logging setup + secret-redacting filter
-  bot/handlers/              start, document upload, batch, review, conversion, history, search, settings, admin
+  bot/handlers/              start, document upload, voice/audio transcription, batch, review, conversion, history, search, settings, admin
   bot/keyboards/              inline keyboards (main menu, per-document actions, batch, review, admin)
   bot/upload_pipeline.py     shared validate/download/store/inspect logic (single + batch uploads)
   bot/formats.py             shared Telegram-action <-> DB OutputFormat mappings
