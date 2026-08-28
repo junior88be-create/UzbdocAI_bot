@@ -20,6 +20,7 @@ COPY . .
 
 RUN useradd --create-home --uid 1000 appuser \
     && mkdir -p /app/storage/uploads /app/storage/processed /app/storage/outputs \
+    && chmod +x /app/scripts/combined_start.sh \
     && chown -R appuser:appuser /app
 
 USER appuser

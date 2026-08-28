@@ -312,6 +312,34 @@ mypy app                # type check - clean
 - Use managed Postgres/Redis in production rather than the docker-compose services.
 - Keep `ALLOWED_TELEGRAM_IDS` tightly scoped; add users deliberately.
 
+### Single-container platforms (Railway, Render, Fly.io, etc.)
+
+`docker-compose.yml`'s bot/worker/beat split assumes they share one filesystem (one
+Docker volume mounted into all three) for `storage/uploads`, `storage/processed`, and
+`storage/outputs`. On a platform where each "service" is its own isolated container
+with **no shared volume across services** (Railway's free/hobby tier, notably), the
+bot writes an uploaded file the worker can never see, and the worker writes a
+generated file the bot can never read back to send to the user - every job fails
+with `FileNotFoundError`, with no indication anything is configured wrong until you
+check the worker's logs.
+
+`scripts/combined_start.sh` runs all three processes (bot + Celery worker + Celery
+beat) in one container instead, so they share one filesystem. To use it, point the
+platform's start command at it instead of the Dockerfile's default `CMD`:
+
+```bash
+bash scripts/combined_start.sh
+```
+
+Then attach **one** persistent volume mounted at `/app/storage` to that single
+service (so uploads survive a restart between "received" and "processed"), and set
+`DATABASE_URL` / `REDIS_URL` to your managed Postgres/Redis instances - a single
+service is enough; you do not need separate worker/beat services on these platforms.
+If any of the three processes dies, the script exits (taking the others down with
+it) so the platform's restart policy brings all three back up together, rather than
+leaving the deployment in a half-alive state where e.g. the bot answers but nothing
+ever finishes processing.
+
 ## 12. Security recommendations
 
 Already implemented:
