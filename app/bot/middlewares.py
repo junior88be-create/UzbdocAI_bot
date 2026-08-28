@@ -1,10 +1,11 @@
 """Access-control middleware.
 
-Enforces the allowlist (ALLOWED_TELEGRAM_IDS) and the DB-backed is_active
-flag before any handler runs. Fails closed: an empty allowlist means nobody
-can use the bot until it is configured. Also upserts the User row and
-attaches it to handler data so downstream handlers never need to query it
-again.
+Enforces access before any handler runs, from two sources: the static
+ALLOWED_TELEGRAM_IDS env var, and any User row an admin created via
+/adduser (see admin.py) - a user is let through if either says so. Also
+upserts/refreshes the User row and attaches it to handler data so
+downstream handlers never need to query it again. Fails closed: an empty
+allowlist AND no matching DB row means nobody can use the bot.
 """
 
 from __future__ import annotations
@@ -54,15 +55,19 @@ class AccessControlMiddleware(BaseMiddleware):
 
         settings = get_settings()
         telegram_id = telegram_user.id
-
-        if not settings.is_allowed(telegram_id):
-            await self._reject(event, _UNAUTHORIZED_MESSAGE, _UNAUTHORIZED_MESSAGE_DETAILED)
-            return None
-
         role = UserRole.ADMIN if settings.is_admin(telegram_id) else UserRole.USER
 
         async with get_session() as session:
             user_repo = UserRepository(session)
+            existing_user = await user_repo.get_by_telegram_id(telegram_id)
+
+            if not settings.is_allowed(telegram_id) and existing_user is None:
+                # Neither in the static env allowlist nor previously
+                # granted access via /adduser - nothing to check is_active
+                # on, so this is a first-contact rejection.
+                await self._reject(event, _UNAUTHORIZED_MESSAGE, _UNAUTHORIZED_MESSAGE_DETAILED)
+                return None
+
             db_user = await user_repo.get_or_create(
                 telegram_id=telegram_id,
                 username=telegram_user.username,

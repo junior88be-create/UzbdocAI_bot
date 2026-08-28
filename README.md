@@ -44,8 +44,8 @@ Key design decisions (see inline docstrings for the full reasoning):
 - **Process separation**: the Celery worker never touches the Telegram Bot API or
   `BOT_TOKEN` - only the bot process does. The worker writes progress to Postgres;
   the bot polls it and edits one Telegram message.
-- **Access control fails closed**: an empty `ALLOWED_TELEGRAM_IDS` means nobody can
-  use the bot, not everybody.
+- **Access control fails closed**: an empty `ALLOWED_TELEGRAM_IDS` (and no
+  `/adduser`-created database row) means nobody can use the bot, not everybody.
 
 ### Batch processing
 
@@ -225,6 +225,10 @@ speech detected at all comes back as a one-line DOCX saying so.
 3. Get your own numeric Telegram user ID (e.g. via [@userinfobot](https://t.me/userinfobot))
    and put it in both `ALLOWED_TELEGRAM_IDS` and `ADMIN_TELEGRAM_IDS` so you can use
    and administer the bot immediately.
+4. To grant access to anyone else afterwards, you don't need to touch the env var or
+   redeploy - message the bot as an admin with `/adduser <their_telegram_id>` (see
+   section 9's "Admin commands"). Access is granted if *either* `ALLOWED_TELEGRAM_IDS`
+   or a `/adduser`-created database row says so - see `app/bot/middlewares.py`.
 
 ## 5. Environment variables
 
@@ -233,7 +237,7 @@ Copy `.env.example` to `.env` and fill in real values. Never commit `.env`.
 | Variable | Purpose |
 |---|---|
 | `BOT_TOKEN` | Telegram bot token |
-| `ALLOWED_TELEGRAM_IDS` | Comma-separated allowlist. **Empty = nobody can use the bot** (fail closed). |
+| `ALLOWED_TELEGRAM_IDS` | Comma-separated allowlist. **Empty = nobody can use the bot until an admin runs `/adduser`** (fail closed). |
 | `ADMIN_TELEGRAM_IDS` | Comma-separated subset of the allowlist that gets the ADMIN role |
 | `WEBHOOK_URL` / `WEBHOOK_SECRET` / `WEBHOOK_PATH` | Set `WEBHOOK_URL` to switch from long polling to webhook mode |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | Gemini credentials/model - never hard-coded |
@@ -316,6 +320,20 @@ Webhook mode (production): set `WEBHOOK_URL` (and ideally `WEBHOOK_SECRET`) in
 
 A health endpoint is served on `HEALTH_HOST:HEALTH_PORT` (`/health`, `/health/ready`)
 regardless of polling/webhook mode - used by the Docker healthcheck.
+
+### Admin commands
+
+- `/admin` - opens the admin panel (📊 stats, 👥 user list with enable/disable toggles).
+- `/adduser <telegram_id>` - grants that Telegram user access immediately, without
+  touching `ALLOWED_TELEGRAM_IDS` or redeploying. Creates (or re-activates) their
+  `User` row directly; `app/bot/middlewares.py::AccessControlMiddleware` allows a
+  user through if *either* the env allowlist or this DB row says so. The user
+  supplies their own numeric ID via [@userinfobot](https://t.me/userinfobot) - the
+  bot's own unauthorized-access message walks them through this (see
+  `app/bot/middlewares.py::_UNAUTHORIZED_MESSAGE_DETAILED`).
+
+Both commands are restricted to `ADMIN_TELEGRAM_IDS`; anyone else gets a plain
+"admins only" reply.
 
 ## 10. Testing
 

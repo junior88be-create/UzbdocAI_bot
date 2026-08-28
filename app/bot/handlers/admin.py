@@ -30,7 +30,56 @@ async def cmd_admin(message: Message, db_user_role: UserRole) -> None:
     if not _require_admin(db_user_role):
         await message.reply("⛔ Фақат админлар учун.")
         return
-    await message.answer("🛠 <b>Админ панели</b>", reply_markup=admin_menu_keyboard())
+    await message.answer(
+        "🛠 <b>Админ панели</b>\n\n"
+        "Янги фойдаланувчига рухсат бериш учун:\n"
+        "<code>/adduser &lt;telegram_id&gt;</code>",
+        reply_markup=admin_menu_keyboard(),
+    )
+
+
+@router.message(F.text.startswith("/adduser"))
+async def cmd_add_user(message: Message, db_user_role: UserRole, db_user_id: str) -> None:
+    if not _require_admin(db_user_role):
+        await message.reply("⛔ Фақат админлар учун.")
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
+        await message.reply(
+            "Фойдаланиш: <code>/adduser &lt;telegram_id&gt;</code>\n"
+            "Мисол: <code>/adduser 123456789</code>\n\n"
+            "Фойдаланувчи ўз Telegram ID рақамини @userinfobot орқали била олади."
+        )
+        return
+
+    target_telegram_id = int(parts[1])
+
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        existing = await user_repo.get_by_telegram_id(target_telegram_id)
+        if existing is not None and existing.is_active:
+            await message.reply(f"✅ Фойдаланувчи <code>{target_telegram_id}</code> аллақачон рухсатга эга.")
+            return
+
+        target = await user_repo.get_or_create(
+            telegram_id=target_telegram_id,
+            username=existing.username if existing else None,
+            first_name=existing.first_name if existing else None,
+        )
+        if not target.is_active:
+            await user_repo.set_active(target.id, True)
+        target_user_id = target.id
+
+    await log_action(
+        "admin.add_user",
+        user_id=db_user_id,
+        target_user_id=target_user_id,
+        target_telegram_id=target_telegram_id,
+    )
+    await message.reply(
+        f"✅ Фойдаланувчи <code>{target_telegram_id}</code> ботдан фойдаланиш ҳуқуқини олди."
+    )
 
 
 @router.callback_query(F.data == "admin:stats")
