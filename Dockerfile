@@ -18,13 +18,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN useradd --create-home --uid 1000 appuser \
-    && mkdir -p /app/storage/uploads /app/storage/processed /app/storage/outputs \
-    && chmod +x /app/scripts/combined_start.sh \
-    && chown -R appuser:appuser /app
+RUN mkdir -p /app/storage/uploads /app/storage/processed /app/storage/outputs \
+    && chmod +x /app/scripts/combined_start.sh
 
-USER appuser
-
+# Runs as root: on platforms like Railway, /app/storage is a volume mount
+# owned by root at container start, and a non-root USER can't chown it
+# itself. This is a single-tenant bot in an already-isolated container, so
+# the extra isolation from a dedicated user isn't worth the permission
+# friction.
 EXPOSE 8080 8081
 
 CMD ["python", "-m", "app.main"]
