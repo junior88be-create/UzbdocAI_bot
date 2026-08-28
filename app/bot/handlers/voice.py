@@ -113,6 +113,17 @@ async def _transcribe_and_reply(
         await status_message.edit_text("❌ Овозни матнга айлантиришда кутилмаган хатолик юз берди.")
         return
 
+    # Byte size and character counts only - never the transcript content
+    # itself - so a report like "it stopped after the first speaker" can be
+    # correlated with how much audio/text was actually involved.
+    logger.info(
+        "Transcribed voice/audio message: mime=%s audio_bytes=%d duration_s=%d transcript_chars=%d",
+        mime_type,
+        len(audio_bytes),
+        duration,
+        len(transcript),
+    )
+
     if not transcript:
         await status_message.edit_text(
             "🔇 Товуш аниқланмади ёки унда тушунарли нутқ топилмади."

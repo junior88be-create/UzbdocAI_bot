@@ -69,6 +69,22 @@ def test_voice_prompt_forbids_fabricating_unspoken_content():
     assert "never invent content that was not" in prompt
 
 
+def test_voice_prompt_requires_transcribing_the_full_audio():
+    # Regression: a real multi-participant call recording was only
+    # transcribed up through the first speaker's greeting - the model
+    # treated that as the end of the audio and stopped, silently dropping
+    # every other participant's speech.
+    prompt = build_voice_transcription_prompt()
+    assert "ENTIRE audio" in prompt
+    assert "never stop early" in prompt
+
+
+def test_voice_prompt_requires_transcribing_every_speaker():
+    prompt = build_voice_transcription_prompt()
+    assert "more than one speaker" in prompt
+    assert "do not stop after the first speaker" in prompt
+
+
 def test_voice_prompt_handles_silence_as_empty_string():
     prompt = build_voice_transcription_prompt()
     assert "output an empty string" in prompt
