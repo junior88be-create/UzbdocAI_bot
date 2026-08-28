@@ -55,6 +55,25 @@ class Settings(BaseSettings):
         default="postgresql+asyncpg://doc_ai:doc_ai@localhost:5432/doc_ai_bot"
     )
 
+    @field_validator("database_url", mode="after")
+    @classmethod
+    def _ensure_asyncpg_driver(cls, value: str) -> str:
+        """Normalizes a plain postgres(ql):// URL - what most managed
+        Postgres providers (Railway, Heroku, etc.) hand out by default via
+        their own DATABASE_URL - to explicitly use the asyncpg driver our
+        async engine requires. Without this, wiring DATABASE_URL straight
+        to a provider's own reference variable (the simplest, least
+        error-prone setup - versus hand-assembling the URL from individual
+        host/user/password parts, where one wrong variable name silently
+        produces a malformed URL) would make SQLAlchemy fall back to the
+        sync psycopg2 dialect inside an async engine and fail confusingly.
+        """
+        if value.startswith("postgres://"):
+            return "postgresql+asyncpg://" + value[len("postgres://") :]
+        if value.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + value[len("postgresql://") :]
+        return value
+
     # --- Redis / Celery ---
     redis_url: str = Field(default="redis://localhost:6379/0")
 

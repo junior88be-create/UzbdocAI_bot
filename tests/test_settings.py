@@ -11,6 +11,31 @@ from __future__ import annotations
 from app.config.settings import Settings
 
 
+def test_database_url_normalizes_bare_postgres_scheme_to_asyncpg(monkeypatch):
+    """Regression: Railway's own Postgres plugin hands out a plain
+    postgres:// DATABASE_URL. Wiring that straight through (the simplest,
+    least error-prone setup) used to leave SQLAlchemy falling back to the
+    sync psycopg2 dialect inside our async engine - confusing failure, only
+    caught by actually deploying. The scheme must be normalized regardless
+    of which of the two common bare prefixes a provider uses.
+    """
+    monkeypatch.setenv("DATABASE_URL", "postgres://user:pass@host.railway.internal:5432/railway")
+    settings = Settings()
+    assert settings.database_url == "postgresql+asyncpg://user:pass@host.railway.internal:5432/railway"
+
+
+def test_database_url_normalizes_plain_postgresql_scheme_to_asyncpg(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@host:5432/db")
+    settings = Settings()
+    assert settings.database_url == "postgresql+asyncpg://user:pass@host:5432/db"
+
+
+def test_database_url_already_using_asyncpg_is_left_unchanged(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pass@host:5432/db")
+    settings = Settings()
+    assert settings.database_url == "postgresql+asyncpg://user:pass@host:5432/db"
+
+
 def test_single_id_env_var_parses_as_one_element_list(monkeypatch):
     monkeypatch.setenv("ALLOWED_TELEGRAM_IDS", "8458085494")
     settings = Settings()
