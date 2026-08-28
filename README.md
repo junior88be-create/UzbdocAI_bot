@@ -159,12 +159,17 @@ automatically (only its filename remains matchable), without any extra cleanup c
 
 ### Voice/audio transcription
 
-Sending a Telegram voice message (🎙) or an audio file is handled entirely
-separately from the document pipeline (`app/bot/handlers/voice.py`): the bot
-downloads the audio and sends it directly to Gemini for transcription - no
-Celery task, no `Document` row, nothing written to disk, since transcription
-is a single async I/O-bound call with no CPU-bound preprocessing step (unlike
-PDF page rendering).
+Sending a Telegram voice message (🎙), an audio file, **or a phone
+recording sent as a plain file attachment** (e.g. a call-recorder app's
+`.amr` export, attached via Telegram's generic file picker rather than its
+audio/music picker - Telegram reports these as `message.document`, not
+`message.audio`, so `voice.py` recognizes them by extension/mime type and
+claims them before `document.py`'s PDF/image-only handler would otherwise
+reject them) is handled entirely separately from the document pipeline
+(`app/bot/handlers/voice.py`): the bot downloads the audio and sends it
+directly to Gemini for transcription - no Celery task, no `Document` row,
+nothing written to disk, since transcription is a single async I/O-bound
+call with no CPU-bound preprocessing step (unlike PDF page rendering).
 
 The transcription prompt (`prompts.build_voice_transcription_prompt`) is
 deliberately **not** the document-extraction prompt with different input -

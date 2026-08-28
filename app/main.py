@@ -62,8 +62,13 @@ def build_dispatcher() -> Dispatcher:
     # (only active during BatchFlow.collecting) and fall through to
     # document's plain upload handlers otherwise - see batch.py docstring.
     dispatcher.include_router(batch.router)
-    dispatcher.include_router(document.router)
+    # voice is registered before document: its F.document handler only
+    # matches files that look like audio (by extension/mime - e.g. a phone
+    # recorder app's .amr export sent via Telegram's generic file picker),
+    # and must claim those before document's catch-all F.document handler
+    # rejects them for not being a PDF/image.
     dispatcher.include_router(voice.router)
+    dispatcher.include_router(document.router)
     # review is state-filtered (ReviewFlow) the same way batch is - it must
     # come before any plain-text/message catch-alls, though in practice its
     # own filters are specific enough that order relative to conversion

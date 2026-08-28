@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import F, Router
-from aiogram.types import BufferedInputFile, Message
+from aiogram.types import BufferedInputFile, Document, Message
 
 from app.bot.upload_pipeline import TELEGRAM_BOT_API_DOWNLOAD_LIMIT, download_telegram_file
 from app.config.settings import get_settings
@@ -32,6 +32,61 @@ router = Router(name="voice")
 # rejecting the file outright.
 _DEFAULT_VOICE_MIME_TYPE = "audio/ogg"
 _DEFAULT_AUDIO_MIME_TYPE = "audio/mpeg"
+
+# A phone recording (e.g. a call-recorder app's .amr export) sent via
+# Telegram's "file" attach button arrives as a generic `message.document`,
+# not `message.audio` - Telegram only auto-classifies as audio when it's
+# attached through the dedicated audio/music picker. Recognize these by
+# extension/mime so they reach transcription instead of being rejected by
+# the document pipeline's PDF/image-only extension check (see document.py).
+_AUDIO_EXTENSION_MIME_TYPES = {
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".flac": "audio/flac",
+    ".amr": "audio/amr",
+    ".wma": "audio/x-ms-wma",
+    ".3gp": "audio/3gpp",
+    ".webm": "audio/webm",
+}
+
+
+def _audio_mime_type_for_document(document: Document) -> str | None:
+    mime_type = document.mime_type or ""
+    if mime_type.startswith("audio/"):
+        return mime_type
+    filename = (document.file_name or "").lower()
+    for extension, mapped_mime_type in _AUDIO_EXTENSION_MIME_TYPES.items():
+        if filename.endswith(extension):
+            return mapped_mime_type
+    return None
+
+
+def _document_looks_like_audio(message: Message) -> bool:
+    document = message.document
+    return document is not None and _audio_mime_type_for_document(document) is not None
+
+
+@router.message(F.document, _document_looks_like_audio)
+async def handle_audio_sent_as_document(message: Message) -> None:
+    document = message.document
+    assert document is not None  # guaranteed by the filter above
+    mime_type = _audio_mime_type_for_document(document)
+    assert mime_type is not None  # guaranteed by the filter above
+    await _transcribe_and_reply(
+        message,
+        file_id=document.file_id,
+        # Telegram's generic Document type carries no duration metadata
+        # (unlike Voice/Audio), so the duration cap can't be pre-checked
+        # here - the file-size cap below still applies.
+        duration=0,
+        file_size=document.file_size or 0,
+        mime_type=mime_type,
+    )
 
 
 @router.message(F.voice)
