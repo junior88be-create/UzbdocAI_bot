@@ -85,15 +85,27 @@ def test_voice_prompt_requires_transcribing_every_speaker():
     assert "do not stop after the first speaker" in prompt
 
 
-def test_voice_prompt_handles_silence_as_empty_string():
+def test_voice_prompt_handles_silence_as_empty_segments():
     prompt = build_voice_transcription_prompt()
-    assert "output an empty string" in prompt
+    assert "return an empty segments" in prompt
+
+
+def test_voice_prompt_requires_speaker_labels_without_inventing_names():
+    prompt = build_voice_transcription_prompt()
+    assert "Спикер 1" in prompt
+    assert "Never invent or guess a real name" in prompt
+
+
+def test_voice_prompt_requires_start_time_per_segment():
+    prompt = build_voice_transcription_prompt()
+    assert "start_time" in prompt
+    assert "MM:SS" in prompt
 
 
 def test_voice_prompt_does_not_reuse_document_json_schema_language():
-    # This is a plain-text transcription prompt, not the structured
-    # DocumentResult JSON extraction prompt - it must not carry over the
-    # document-specific output-shape instructions.
+    # This prompt has its own JSON shape (VoiceTranscript: language +
+    # segments) - it must not carry over the unrelated DocumentResult
+    # document-extraction output-shape instructions.
     prompt = build_voice_transcription_prompt()
     assert "text_blocks" not in prompt
     assert "response_schema" not in prompt

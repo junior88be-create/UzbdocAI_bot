@@ -176,11 +176,21 @@ it enforces the opposite instinct on purpose:
   coherent text, rather than preserved as-is or flagged uncertain.
 - Content that was never actually spoken is still never invented - context
   may only fill in *how* something noisy was likely said, not *what* wasn't
-  said at all. A section with no intelligible speech comes back as an empty
-  string, which the bot reports directly rather than guessing.
+  said at all.
+- The audio is transcribed end-to-end and speaker-by-speaker: Gemini returns
+  structured segments (`app/schemas/transcript.py::VoiceTranscript`), each
+  with a speaker label (their stated name if they say it out loud, otherwise
+  a consistent "Спикер 1"/"Спикер 2" - never a guessed real name) and a
+  `start_time` (MM:SS from the start of the audio). The prompt explicitly
+  forbids stopping after the first speaker or first pause - an earlier
+  version of this prompt did exactly that on a real multi-participant call
+  recording before this rule was added.
 
-Short transcripts are sent as a plain (HTML-escaped) chat message; long ones
-are sent as a `.txt` file instead of being split into several messages.
+The result is rendered to a `.docx` (`app/services/transcript_docx_service.py`,
+entirely in memory - nothing touches disk) with one `[start_time] Speaker`
+heading per segment, and sent back as a document, mirroring a real
+meeting/call transcript rather than an undifferentiated wall of text. No
+speech detected at all comes back as a one-line DOCX saying so.
 
 ## 2. Requirements
 

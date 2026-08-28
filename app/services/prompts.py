@@ -185,6 +185,12 @@ def build_voice_transcription_prompt() -> str:
     standard literary form and smooth over noisy audio using context - the
     opposite instinct. Keeping the two prompts separate stops one task's
     rules from silently leaking into the other.
+
+    Output is structured (one segment per speaker turn, each carrying a
+    start_time - see app/schemas/transcript.py::VoiceTranscript) rather than
+    a single text blob, so the DOCX renderer can label who said what and
+    when, matching a real meeting/call transcript instead of an
+    undifferentiated wall of text.
     """
     return """
 You are a highly accurate speech-to-text transcription engine specialized in
@@ -199,39 +205,52 @@ exactly, without exception:
    it and continue with whatever comes after.
 2. The audio may contain more than one speaker/participant (e.g. a phone
    call, a voicemail followed by a recorded message, or a conversation).
-   Transcribe every speaker's words, in the order spoken, for the full
+   Identify each distinct voice and split the transcript into segments, one
+   per uninterrupted speaker turn, in chronological order, covering the full
    duration of the audio - do not stop after the first speaker or first
    segment, and do not silently drop any participant's speech.
-3. Transcribe the spoken audio into text that fully follows the standard
-   grammatical and orthographic (spelling) rules of the language spoken -
-   literary-standard Uzbek or Russian, not a phonetic or word-for-word
-   rendering of casual pronunciation. Use correct punctuation, capitalization,
-   and sentence/paragraph breaks that match the natural pauses and structure
-   of the speech.
-4. When a part of the audio is noisy, mumbled, unclear, or low quality,
+3. For each segment, set "speaker" to that speaker's own name if - and only
+   if - they actually say their name out loud in the audio; otherwise use a
+   consistent generic label such as "Спикер 1", "Спикер 2" (numbered in the
+   order speakers first appear) - reuse the exact same label every time that
+   same voice speaks again. Never invent or guess a real name for a speaker
+   who never states one.
+4. For each segment, set "start_time" to the approximate timestamp, in MM:SS
+   format (HH:MM:SS if the audio runs past one hour), counted from the very
+   beginning of the audio, at which that segment begins.
+5. Set "text" to that segment's speech, transcribed into text that fully
+   follows the standard grammatical and orthographic (spelling) rules of the
+   language spoken - literary-standard Uzbek or Russian, not a phonetic or
+   word-for-word rendering of casual pronunciation. Use correct punctuation
+   and capitalization.
+6. When part of a segment is noisy, mumbled, unclear, or low quality,
    reconstruct the most logical wording using the surrounding sentence and
-   overall context, so the result reads as a coherent, well-formed text
+   overall context, so the result reads as coherent, well-formed text
    instead of gibberish or a gap - then continue transcribing the rest of
    the audio exactly as required by rule 1.
-5. Preserve the speaker's original meaning, tone, and style exactly - do not
-   summarize, shorten, embellish, or change what was actually said while
+7. Preserve each speaker's original meaning, tone, and style exactly - do
+   not summarize, shorten, embellish, or change what was actually said while
    normalizing its spelling/grammar.
-6. Never add information, facts, names, numbers, or claims that are not
+8. Never add information, facts, names, numbers, or claims that are not
    actually present in the audio or a direct, unavoidable logical
    consequence of it. Only reconstruct wording for something that was
    genuinely spoken but hard to hear - never invent content that was not
    spoken at all. If the audio (or a whole section of it) contains no
-   intelligible speech at all, output an empty string for that section
-   rather than guessing, but still continue transcribing any speech that
-   follows it.
-7. If Uzbek is spoken, decide whether the speaker is using Cyrillic or Latin
+   intelligible speech at all, omit a segment for that section rather than
+   guessing, but still continue transcribing any speech that follows it. If
+   nothing in the entire audio is intelligible, return an empty segments
+   list.
+9. If Uzbek is spoken, decide whether the speaker is using Cyrillic or Latin
    script conventions and write consistently in that script, using correct
    Uzbek spelling - including the letters Ў, Қ, Ғ, Ҳ in Cyrillic, or the
    apostrophe-letters o' and g' in Latin. If Russian is spoken, write in
    correct Russian. Do not translate between languages and do not mix
-   languages unless the speaker genuinely code-switches.
-8. Output ONLY the final transcribed text - no labels, headers, notes,
-   timestamps, speaker names, JSON, or commentary of any kind.
+   languages unless the speaker genuinely code-switches. Set the top-level
+   "language" field to whichever language is dominant overall.
+10. Return ONLY a single JSON object matching the required schema - an
+    ordered "segments" array of {speaker, start_time, text} objects plus
+    "language". Do not include markdown code fences, commentary, or
+    explanation outside the JSON.
 """
 
 

@@ -5,13 +5,12 @@ flow is intentionally simple and self-contained: transcription is a single
 async I/O-bound Gemini call with no CPU-bound preprocessing (no PDF
 rendering), so there is no need to persist the audio, create a Document
 row, or hand off to the Celery worker - the handler downloads the audio,
-calls Gemini directly, and replies. Nothing is written to disk, so there is
-nothing for the retention/cleanup job to track.
+calls Gemini directly, renders a DOCX in memory, and replies. Nothing is
+written to disk, so there is nothing for the retention/cleanup job to track.
 """
 
 from __future__ import annotations
 
-import html
 import logging
 
 from aiogram import F, Router
@@ -20,6 +19,7 @@ from aiogram.types import BufferedInputFile, Message
 from app.bot.upload_pipeline import TELEGRAM_BOT_API_DOWNLOAD_LIMIT, download_telegram_file
 from app.config.settings import get_settings
 from app.services.gemini_service import GeminiServiceError, get_gemini_service
+from app.services.transcript_docx_service import generate_transcript_docx
 from app.utils.security import FileValidationError, validate_file_size
 
 logger = logging.getLogger(__name__)
@@ -32,11 +32,6 @@ router = Router(name="voice")
 # rejecting the file outright.
 _DEFAULT_VOICE_MIME_TYPE = "audio/ogg"
 _DEFAULT_AUDIO_MIME_TYPE = "audio/mpeg"
-
-# Telegram's message can report 4096 characters, but HTML entity escaping
-# (&amp; etc.) and our own header can push an unescaped transcript over that
-# limit - stay well clear of it and send a file instead when exceeded.
-_MAX_INLINE_TRANSCRIPT_CHARS = 3500
 
 
 @router.message(F.voice)
@@ -113,29 +108,21 @@ async def _transcribe_and_reply(
         await status_message.edit_text("❌ Овозни матнга айлантиришда кутилмаган хатолик юз берди.")
         return
 
-    # Byte size and character counts only - never the transcript content
-    # itself - so a report like "it stopped after the first speaker" can be
-    # correlated with how much audio/text was actually involved.
+    # Byte/segment counts only - never the transcript content itself - so a
+    # report like "it stopped after the first speaker" can be correlated
+    # with how much audio/text was actually involved.
     logger.info(
-        "Transcribed voice/audio message: mime=%s audio_bytes=%d duration_s=%d transcript_chars=%d",
+        "Transcribed voice/audio message: mime=%s audio_bytes=%d duration_s=%d segments=%d",
         mime_type,
         len(audio_bytes),
         duration,
-        len(transcript),
+        len(transcript.segments),
     )
 
-    if not transcript:
-        await status_message.edit_text(
-            "🔇 Товуш аниқланмади ёки унда тушунарли нутқ топилмади."
-        )
+    if not transcript.segments:
+        await status_message.edit_text("🔇 Товуш аниқланмади ёки унда тушунарли нутқ топилмади.")
         return
 
-    escaped = html.escape(transcript)
-    if len(escaped) <= _MAX_INLINE_TRANSCRIPT_CHARS:
-        await status_message.edit_text(f"📝 <b>Матн:</b>\n\n{escaped}")
-        return
-
-    await status_message.edit_text("📝 Матн тайёр (файл сифатида юборилмоқда - узунлиги катта):")
-    await message.answer_document(
-        BufferedInputFile(transcript.encode("utf-8"), filename="transcript.txt")
-    )
+    docx_bytes = generate_transcript_docx(transcript)
+    await status_message.edit_text("📝 Матн тайёр - файл сифатида юборилмоқда:")
+    await message.answer_document(BufferedInputFile(docx_bytes, filename="transcript.docx"))

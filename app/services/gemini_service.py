@@ -27,6 +27,7 @@ from tenacity import (
 
 from app.config.settings import get_settings
 from app.schemas.extraction import DocumentResult
+from app.schemas.transcript import VoiceTranscript
 from app.services import prompts
 
 logger = logging.getLogger(__name__)
@@ -66,9 +67,9 @@ class GeminiService:
             retry=retry_if_exception(_is_transient),
         )
 
-    async def _generate(self, contents: list, *, response_schema: type | None = DocumentResult) -> str:
+    async def _generate(self, contents: list, *, response_schema: type = DocumentResult) -> str:
         config = types.GenerateContentConfig(
-            response_mime_type="application/json" if response_schema is not None else "text/plain",
+            response_mime_type="application/json",
             response_schema=response_schema,
             temperature=0.0,
             # Explicit, generous ceiling (not the SDK/model implicit
@@ -154,15 +155,23 @@ class GeminiService:
         raw_json = await self._generate(contents)
         return self._validate(raw_json)
 
-    async def transcribe_audio(self, audio_bytes: bytes, mime_type: str) -> str:
-        """Transcribes a voice/audio message. Returns plain text (empty
-        string if no intelligible speech was found) - see
-        prompts.build_voice_transcription_prompt for the exact rules.
+    async def transcribe_audio(self, audio_bytes: bytes, mime_type: str) -> VoiceTranscript:
+        """Transcribes a voice/audio message into speaker-labeled,
+        timestamped segments (empty `segments` if no intelligible speech was
+        found) - see prompts.build_voice_transcription_prompt for the exact
+        rules.
         """
         prompt = prompts.build_voice_transcription_prompt()
         contents: list = [prompt, types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)]
-        text = await self._generate(contents, response_schema=None)
-        return text.strip()
+        raw_json = await self._generate(contents, response_schema=VoiceTranscript)
+        return self._validate_transcript(raw_json)
+
+    def _validate_transcript(self, raw_json: str) -> VoiceTranscript:
+        try:
+            return VoiceTranscript.model_validate_json(raw_json)
+        except ValidationError as exc:
+            logger.error("Gemini returned JSON that failed transcript schema validation: %s", exc)
+            raise GeminiServiceError("Gemini кутилмаган жавоб формати қайтарди.") from exc
 
 
 _service: GeminiService | None = None

@@ -17,6 +17,7 @@ from app.schemas.extraction import (
     TableBlock,
     TextBlock,
 )
+from app.schemas.transcript import TranscriptSegment, VoiceTranscript
 from app.services.gemini_service import (
     GeminiService,
     GeminiServiceError,
@@ -161,25 +162,39 @@ def test_gemini_service_validate_rejects_malformed_json():
 
 
 @pytest.mark.asyncio
-async def test_transcribe_audio_requests_plain_text_and_strips_result():
+async def test_transcribe_audio_requests_voice_transcript_schema():
     service = GeminiService.__new__(GeminiService)
     captured = {}
+
+    payload = VoiceTranscript(
+        language="uz",
+        segments=[
+            TranscriptSegment(speaker="Спикер 1", start_time="00:00", text="Salom."),
+            TranscriptSegment(speaker="Спикер 2", start_time="00:05", text="Assalomu alaykum."),
+        ],
+    ).model_dump_json()
 
     async def fake_generate(contents, *, response_schema=DocumentResult):
         captured["contents"] = contents
         captured["response_schema"] = response_schema
-        return "  Salom, bu sinov matni.  \n"
+        return payload
 
     service._generate = fake_generate  # type: ignore[method-assign]
 
     result = await service.transcribe_audio(b"fake-audio-bytes", "audio/ogg")
 
-    assert result == "Salom, bu sinov matni."
-    # A plain transcript has no JSON shape to validate against - passing
-    # response_schema=None must switch _generate to text/plain mode instead
-    # of trying to force the DocumentResult JSON schema onto free text.
-    assert captured["response_schema"] is None
+    assert [segment.speaker for segment in result.segments] == ["Спикер 1", "Спикер 2"]
+    # A voice transcript has its own JSON shape (VoiceTranscript, not
+    # DocumentResult) - _generate must be told to validate against that
+    # schema instead of falling back to the document-extraction default.
+    assert captured["response_schema"] is VoiceTranscript
     assert len(captured["contents"]) == 2
+
+
+def test_gemini_service_validate_transcript_rejects_malformed_json():
+    service = GeminiService.__new__(GeminiService)
+    with pytest.raises(GeminiServiceError):
+        service._validate_transcript("{this is not valid json")
 
 
 class _FakeCandidate:
