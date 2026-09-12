@@ -64,6 +64,10 @@ class UserRepository:
         await self.session.flush()
         return user
 
+    async def get(self, user_id: str) -> User | None:
+        result = await self.session.execute(select(User).where(User.id == user_id))
+        return result.scalar_one_or_none()
+
     async def list_all(self) -> list[User]:
         result = await self.session.execute(select(User).order_by(User.created_at.desc()))
         return list(result.scalars().all())
@@ -71,9 +75,72 @@ class UserRepository:
     async def set_active(self, user_id: str, is_active: bool) -> None:
         await self.session.execute(update(User).where(User.id == user_id).values(is_active=is_active))
 
+    async def set_subscription(self, user_id: str, expires_at: datetime) -> None:
+        await self.session.execute(
+            update(User).where(User.id == user_id).values(subscription_expires_at=expires_at)
+        )
+
     async def count(self) -> int:
         result = await self.session.execute(select(User))
         return len(result.scalars().all())
+
+    async def check_and_consume_quota(self, user_id: str, free_limit: int, period: timedelta) -> bool:
+        """Gates one processing request (document conversion or voice/audio
+        transcription - both share the same counter) against the monthly
+        free-tier quota. Admins and users with an active subscription always
+        pass without consuming anything. Returns False when the free quota
+        for the current period is exhausted and no subscription covers it -
+        callers must not proceed with processing in that case.
+        """
+        user = await self.get(user_id)
+        if user is None:
+            return True  # AccessControlMiddleware always creates the row first; defensive only.
+
+        allowed, new_period_start, new_used = _quota_decision(
+            role=user.role,
+            subscription_expires_at=user.subscription_expires_at,
+            usage_period_start=user.usage_period_start,
+            free_requests_used=user.free_requests_used,
+            free_limit=free_limit,
+            period=period,
+            now=datetime.now(UTC),
+        )
+        user.usage_period_start = new_period_start
+        user.free_requests_used = new_used
+        await self.session.flush()
+        return allowed
+
+
+def _quota_decision(
+    *,
+    role: UserRole,
+    subscription_expires_at: datetime | None,
+    usage_period_start: datetime,
+    free_requests_used: int,
+    free_limit: int,
+    period: timedelta,
+    now: datetime,
+) -> tuple[bool, datetime, int]:
+    """Pure decision logic behind UserRepository.check_and_consume_quota -
+    kept free of the DB session so it can be unit tested directly. Returns
+    (allowed, new_usage_period_start, new_free_requests_used); callers are
+    responsible for persisting the two returned state values regardless of
+    the outcome (a period reset must stick even when the request itself is
+    denied).
+    """
+    if role == UserRole.ADMIN:
+        return True, usage_period_start, free_requests_used
+    if subscription_expires_at is not None and subscription_expires_at > now:
+        return True, usage_period_start, free_requests_used
+
+    if now - usage_period_start >= period:
+        usage_period_start = now
+        free_requests_used = 0
+
+    if free_requests_used >= free_limit:
+        return False, usage_period_start, free_requests_used
+
+    return True, usage_period_start, free_requests_used + 1
 
 
 class DocumentRepository:

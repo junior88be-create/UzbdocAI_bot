@@ -16,6 +16,7 @@ import logging
 from aiogram import F, Router
 from aiogram.types import BufferedInputFile, Document, Message
 
+from app.bot.quota import check_and_consume_quota
 from app.bot.upload_pipeline import TELEGRAM_BOT_API_DOWNLOAD_LIMIT, download_telegram_file
 from app.config.settings import get_settings
 from app.services.gemini_service import GeminiServiceError, get_gemini_service
@@ -72,13 +73,14 @@ def _document_looks_like_audio(message: Message) -> bool:
 
 
 @router.message(F.document, _document_looks_like_audio)
-async def handle_audio_sent_as_document(message: Message) -> None:
+async def handle_audio_sent_as_document(message: Message, db_user_id: str) -> None:
     document = message.document
     assert document is not None  # guaranteed by the filter above
     mime_type = _audio_mime_type_for_document(document)
     assert mime_type is not None  # guaranteed by the filter above
     await _transcribe_and_reply(
         message,
+        db_user_id=db_user_id,
         file_id=document.file_id,
         # Telegram's generic Document type carries no duration metadata
         # (unlike Voice/Audio), so the duration cap can't be pre-checked
@@ -90,11 +92,12 @@ async def handle_audio_sent_as_document(message: Message) -> None:
 
 
 @router.message(F.voice)
-async def handle_voice_message(message: Message) -> None:
+async def handle_voice_message(message: Message, db_user_id: str) -> None:
     voice = message.voice
     assert voice is not None  # guaranteed by the F.voice filter
     await _transcribe_and_reply(
         message,
+        db_user_id=db_user_id,
         file_id=voice.file_id,
         duration=voice.duration,
         file_size=voice.file_size or 0,
@@ -103,11 +106,12 @@ async def handle_voice_message(message: Message) -> None:
 
 
 @router.message(F.audio)
-async def handle_audio_message(message: Message) -> None:
+async def handle_audio_message(message: Message, db_user_id: str) -> None:
     audio = message.audio
     assert audio is not None  # guaranteed by the F.audio filter
     await _transcribe_and_reply(
         message,
+        db_user_id=db_user_id,
         file_id=audio.file_id,
         duration=audio.duration,
         file_size=audio.file_size or 0,
@@ -118,6 +122,7 @@ async def handle_audio_message(message: Message) -> None:
 async def _transcribe_and_reply(
     message: Message,
     *,
+    db_user_id: str,
     file_id: str,
     duration: int,
     file_size: int,
@@ -137,6 +142,11 @@ async def _transcribe_and_reply(
         validate_file_size(file_size, effective_limit)
     except FileValidationError as exc:
         await message.reply(f"❌ {exc}")
+        return
+
+    quota_block_message = await check_and_consume_quota(db_user_id)
+    if quota_block_message is not None:
+        await message.reply(quota_block_message)
         return
 
     status_message = await message.reply("⏳ Овозли хабар матнга айлантирилмоқда...")

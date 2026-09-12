@@ -88,6 +88,13 @@ class Settings(BaseSettings):
     # cost/latency (Gemini itself accepts much longer audio).
     max_voice_duration_seconds: int = Field(default=600)
 
+    # --- Free-tier quota / subscriptions ---
+    # Document conversions and voice/audio transcriptions share one monthly
+    # counter (see UserRepository.check_and_consume_quota). Admins and users
+    # with an active subscription (granted via /subscribe - see admin.py) are
+    # exempt. There is no in-bot payment flow.
+    free_requests_per_month: int = Field(default=3)
+
     # --- Logging ---
     log_level: str = Field(default="INFO")
 

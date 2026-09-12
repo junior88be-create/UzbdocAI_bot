@@ -7,6 +7,8 @@ contents or the structured extraction data.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import func, select
@@ -14,6 +16,7 @@ from sqlalchemy import func, select
 from app.bot.keyboards.admin import admin_menu_keyboard, user_toggle_keyboard
 from app.bot.middlewares import log_action
 from app.bot.utils import editable_message
+from app.config.settings import get_settings
 from app.database.database import get_session
 from app.database.models import Document, DocumentStatus, JobStatus, ProcessingJob, User, UserRole
 from app.database.repositories import UserRepository
@@ -33,7 +36,10 @@ async def cmd_admin(message: Message, db_user_role: UserRole) -> None:
     await message.answer(
         "🛠 <b>Админ панели</b>\n\n"
         "Янги фойдаланувчига рухсат бериш учун:\n"
-        "<code>/adduser &lt;telegram_id&gt;</code>",
+        "<code>/adduser &lt;telegram_id&gt;</code>\n\n"
+        "Фойдаланувчига обуна бериш учун (тўлов ботдан ташқарида амалга "
+        "оширилгандан сўнг):\n"
+        "<code>/subscribe &lt;telegram_id&gt; &lt;кун_сони&gt;</code>",
         reply_markup=admin_menu_keyboard(),
     )
 
@@ -79,6 +85,56 @@ async def cmd_add_user(message: Message, db_user_role: UserRole, db_user_id: str
     )
     await message.reply(
         f"✅ Фойдаланувчи <code>{target_telegram_id}</code> ботдан фойдаланиш ҳуқуқини олди."
+    )
+
+
+@router.message(F.text.startswith("/subscribe"))
+async def cmd_subscribe_user(message: Message, db_user_role: UserRole, db_user_id: str) -> None:
+    """Manually grants a user paid-subscription access (unlimited requests,
+    bypassing the free-tier quota) for a given number of days. There is no
+    in-bot payment flow - the admin runs this after arranging payment with
+    the user outside the bot (see quota.py's block message)."""
+    if not _require_admin(db_user_role):
+        await message.reply("⛔ Фақат админлар учун.")
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) != 3 or not parts[1].lstrip("-").isdigit() or not parts[2].isdigit():
+        await message.reply(
+            "Фойдаланиш: <code>/subscribe &lt;telegram_id&gt; &lt;кун_сони&gt;</code>\n"
+            "Мисол: <code>/subscribe 123456789 30</code>"
+        )
+        return
+
+    target_telegram_id = int(parts[1])
+    days = int(parts[2])
+    if days <= 0:
+        await message.reply("❌ Кун сони мусбат бўлиши керак.")
+        return
+
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        target = await user_repo.get_by_telegram_id(target_telegram_id)
+        if target is None:
+            await message.reply(
+                f"❌ Фойдаланувчи <code>{target_telegram_id}</code> топилмади - "
+                "аввал <code>/adduser</code> билан рухсат беринг."
+            )
+            return
+        expires_at = datetime.now(UTC) + timedelta(days=days)
+        await user_repo.set_subscription(target.id, expires_at)
+        target_user_id = target.id
+
+    await log_action(
+        "admin.subscribe_user",
+        user_id=db_user_id,
+        target_user_id=target_user_id,
+        target_telegram_id=target_telegram_id,
+        days=days,
+    )
+    await message.reply(
+        f"✅ Фойдаланувчи <code>{target_telegram_id}</code>га {days} кунлик обуна "
+        f"фаоллаштирилди ({expires_at.strftime('%Y-%m-%d')}гача)."
     )
 
 
@@ -147,11 +203,19 @@ async def cb_admin_users(callback: CallbackQuery, db_user_role: UserRole) -> Non
         await callback.answer()
         return
 
+    settings = get_settings()
+    now = datetime.now(UTC)
     for user in users[:30]:
         label = user.username or user.first_name or "(номсиз)"
+        if user.role == UserRole.ADMIN:
+            usage_label = "чекловсиз (админ)"
+        elif user.subscription_expires_at is not None and user.subscription_expires_at > now:
+            usage_label = f"обуна ({user.subscription_expires_at.strftime('%Y-%m-%d')}гача)"
+        else:
+            usage_label = f"{user.free_requests_used}/{settings.free_requests_per_month} бепул сўров"
         text = (
             f"👤 {label} (<code>{user.telegram_id}</code>)\n"
-            f"Рол: {user.role.value} | Фаол: {'Ҳа' if user.is_active else 'Йўқ'}"
+            f"Рол: {user.role.value} | Фаол: {'Ҳа' if user.is_active else 'Йўқ'} | {usage_label}"
         )
         await message.answer(text, reply_markup=user_toggle_keyboard(user.id, user.is_active))
     await callback.answer()

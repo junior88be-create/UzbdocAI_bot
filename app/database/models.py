@@ -118,6 +118,17 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # Free-tier request quota (documents + voice/audio share one counter) and
+    # paid-subscription override - see app.database.repositories.UserRepository
+    # .check_and_consume_quota and app/bot/handlers/admin.py's /subscribe.
+    # There is no in-bot payment flow: a subscription is granted manually by
+    # an admin after payment is arranged outside the bot.
+    free_requests_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    usage_period_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    subscription_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     documents: Mapped[list[Document]] = relationship(back_populates="user")
 
 

@@ -19,6 +19,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from app.bot.formats import EXPECTED_FORMATS, FILENAME_SUFFIX
 from app.bot.handlers import review
 from app.bot.keyboards.document import DocumentActionCallback
+from app.bot.quota import check_and_consume_quota
 from app.bot.utils import editable_message, safe_edit_text
 from app.database.database import get_session
 from app.database.models import DocumentStatus, JobStatus
@@ -81,6 +82,11 @@ async def handle_document_action(callback: CallbackQuery, db_user_id: str, state
         await _safe_edit(
             message, "❌ Бу ҳужжат олдин хатолик билан тугаган эди. Илтимос, уни қайта юкланг."
         )
+        return
+
+    quota_block_message = await check_and_consume_quota(db_user_id)
+    if quota_block_message is not None:
+        await _safe_edit(message, quota_block_message)
         return
 
     db_format = DBOutputFormat(action)

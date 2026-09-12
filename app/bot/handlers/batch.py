@@ -31,6 +31,7 @@ from app.bot.keyboards.batch import (
     batch_format_keyboard,
 )
 from app.bot.keyboards.main import MainMenuCallback
+from app.bot.quota import check_and_consume_quota
 from app.bot.states.batch import BatchFlow
 from app.bot.upload_pipeline import (
     StoredDocument,
@@ -251,6 +252,11 @@ async def handle_batch_format(callback: CallbackQuery, db_user_id: str) -> None:
         return
 
     if action not in EXPECTED_FORMATS:
+        return
+
+    quota_block_message = await check_and_consume_quota(db_user_id)
+    if quota_block_message is not None:
+        await safe_edit_text(message, quota_block_message)
         return
 
     db_format = DBOutputFormat(action)

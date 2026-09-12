@@ -249,6 +249,7 @@ Copy `.env.example` to `.env` and fill in real values. Never commit `.env`.
 | `MAX_PDF_PAGES` | Hard cap on pages per PDF (cost + abuse control) |
 | `MAX_BATCH_SIZE` | Max number of files collected into one 📦 batch |
 | `MAX_VOICE_DURATION_SECONDS` | Max accepted duration for a 🎙 voice/audio message |
+| `FREE_REQUESTS_PER_MONTH` | Free-tier quota shared by document conversions and voice/audio transcriptions per user per month (default 3) - see section 9's "Free-tier quota & subscriptions" |
 | `LOG_LEVEL` | Standard Python logging level |
 
 ## 6. Local installation
@@ -331,9 +332,27 @@ regardless of polling/webhook mode - used by the Docker healthcheck.
   supplies their own numeric ID via [@userinfobot](https://t.me/userinfobot) - the
   bot's own unauthorized-access message walks them through this (see
   `app/bot/middlewares.py::_UNAUTHORIZED_MESSAGE_DETAILED`).
+- `/subscribe <telegram_id> <days>` - grants that user unlimited access (bypassing
+  the free-tier quota below) for the given number of days. There is no in-bot
+  payment flow - an admin runs this manually after arranging payment with the user
+  outside the bot.
 
-Both commands are restricted to `ADMIN_TELEGRAM_IDS`; anyone else gets a plain
-"admins only" reply.
+All three commands are restricted to `ADMIN_TELEGRAM_IDS`; anyone else gets a
+plain "admins only" reply.
+
+### Free-tier quota & subscriptions
+
+Document conversions and voice/audio transcriptions share one monthly counter
+per user (`FREE_REQUESTS_PER_MONTH`, default 3 - see
+`app/bot/quota.py` and `UserRepository.check_and_consume_quota` /
+`_quota_decision` in `app/database/repositories.py`). A request is one
+user-initiated processing action - picking an output format for a document or
+batch, or sending a voice/audio message - regardless of whether the underlying
+extraction turns out to be a cached reuse. Admins and users with an active
+subscription (`/subscribe`) are exempt; everyone else's counter resets 30 days
+after it was first used. Once exhausted, the user is told to contact the admin
+(`@bekzod_eshniyazov`) to arrange a paid subscription - there is no automated
+payment integration (Click/Payme, etc.) built in.
 
 ## 10. Testing
 
