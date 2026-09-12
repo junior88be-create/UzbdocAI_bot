@@ -18,7 +18,16 @@
 # If any process exits (crash or otherwise), this script exits too, so the
 # platform's own restart policy brings all three back up together rather
 # than leaving the deployment in a half-alive state.
+#
+# `alembic upgrade head` runs first, before any process starts: without it,
+# a schema-changing migration (e.g. new User columns) ships in code but
+# never gets applied to the real database, so every query touching the
+# affected table starts failing in production the moment the new code
+# deploys - this bit us for real once already.
 set -eu
+
+echo "[combined_start] running database migrations..."
+alembic upgrade head
 
 echo "[combined_start] starting celery worker..."
 celery -A app.worker.celery_app worker --loglevel=INFO --concurrency=2 &
