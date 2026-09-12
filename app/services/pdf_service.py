@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 
 import pymupdf as fitz
 from PIL import Image
@@ -21,6 +22,52 @@ logger = logging.getLogger(__name__)
 # characters of extractable text - short strings are often just a stray
 # watermark/page number on an otherwise scanned page.
 _MIN_TEXT_CHARS_FOR_DIGITAL = 40
+
+# Some PDFs carry a real text layer that is nonetheless wrong: an embedded
+# font subset with a non-standard/broken encoding (no proper ToUnicode
+# CMap) makes PyMuPDF's raw character extraction pull the wrong Unicode
+# code point per glyph, even though the page renders as completely normal
+# text visually (a human opening the PDF, or Gemini Vision looking at a
+# rendered image of it, reads it fine). This is common for older
+# Uzbek/Russian Cyrillic documents built on legacy fonts. The symptom is
+# distinctive: a single "word" ends up with Latin letters/digits fused
+# into what should be a pure-Cyrillic token (e.g. "жtиноят" instead of
+# "жиноят", "2О24" instead of "2024" - that "О" is Cyrillic, not zero) -
+# real bilingual text never mixes scripts *within* one token, only across
+# whole words. Below this threshold of such tokens, a page is trusted as
+# digital text; at or above it, the page is treated as if it had no
+# reliable text layer at all, so document_service.process() routes it
+# through Gemini Vision instead - the same path already used for scanned
+# pages - which reads the rendered glyphs correctly regardless of the
+# font's broken internal encoding.
+_MIN_GARBLED_TOKENS_TO_DISTRUST_PAGE = 3
+
+_CYRILLIC_RANGE = (0x0400, 0x04FF)
+_LATIN_LETTERS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+_WORD_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+
+
+def _is_cyrillic(char: str) -> bool:
+    return _CYRILLIC_RANGE[0] <= ord(char) <= _CYRILLIC_RANGE[1]
+
+
+def _looks_garbled(text: str) -> bool:
+    """See _MIN_GARBLED_TOKENS_TO_DISTRUST_PAGE above for why this specific
+    signal (Latin letters/digits fused into an otherwise-Cyrillic token) is
+    used, rather than a general script/language check."""
+    garbled_tokens = 0
+    for token in _WORD_TOKEN_RE.findall(text):
+        has_cyrillic = any(_is_cyrillic(c) for c in token)
+        if not has_cyrillic:
+            continue
+        has_latin_letter = any(c in _LATIN_LETTERS for c in token)
+        has_digit = any(c.isdigit() for c in token)
+        digit_majority = sum(c.isdigit() for c in token) * 2 > len(token)
+        if has_latin_letter or (has_digit and digit_majority):
+            garbled_tokens += 1
+            if garbled_tokens >= _MIN_GARBLED_TOKENS_TO_DISTRUST_PAGE:
+                return True
+    return False
 
 # Rendering resolution for pages sent to Gemini Vision. Handwriting - Uzbek
 # Cyrillic/Latin especially, where diacritics like Ў/Қ/Ғ/Ҳ or the oʻ/gʻ
@@ -59,10 +106,16 @@ def inspect_pdf(pdf_bytes: bytes, max_pages: int) -> DocumentInspection:
             page = doc.load_page(index)
             text = page.get_text("text").strip()
             page_number = index + 1
-            if len(text) >= _MIN_TEXT_CHARS_FOR_DIGITAL:
+            if len(text) >= _MIN_TEXT_CHARS_FOR_DIGITAL and not _looks_garbled(text):
                 digital_pages += 1
                 text_by_page[page_number] = text
             else:
+                if len(text) >= _MIN_TEXT_CHARS_FOR_DIGITAL:
+                    logger.warning(
+                        "Page %d has a text layer but it looks garbled (broken font "
+                        "encoding) - falling back to vision OCR for this page",
+                        page_number,
+                    )
                 scanned_pages += 1
 
         if digital_pages == page_count:
