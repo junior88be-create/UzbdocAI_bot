@@ -128,6 +128,17 @@ async def _process_document_async(
         await job_repo.mark_succeeded(job_id)
 
 
+def _looks_under_extracted(result: DocumentResult) -> bool:
+    """A genuinely fully-read document should yield at least one text block
+    per page - see the cache-freshness check in
+    _get_or_build_structured_result for the real incident (a rotated,
+    unlabeled scan silently dropped to a single stamp line) this guards
+    against. Kept as a standalone pure function so it's unit-testable
+    without a DB session, like the rest of this module's cache logic.
+    """
+    return len(result.text_blocks) < result.pages
+
+
 async def _fail(document_id: str, job_id: str, message: str) -> None:
     async with get_session() as session:
         job_repo = ProcessingJobRepository(session)
@@ -165,8 +176,28 @@ async def _get_or_build_structured_result(document_id: str, job_id: str) -> Docu
                 "Cached structured result for document %s failed to load - re-extracting", document_id
             )
         else:
-            logger.info("Reusing cached structured result for document %s (no Gemini call)", document_id)
-            return result
+            if _looks_under_extracted(result):
+                # Regression: a real 2-page scanned document (rotated
+                # photos, no EXIF orientation tag - see
+                # prompts.build_vision_extraction_prompt's rotation
+                # guidance) produced a single text block covering only a
+                # stamp line, with the rest of both pages' content
+                # silently dropped. That "succeeded" (no exception), so it
+                # got cached under this content hash - and every future
+                # upload of the same file would keep reusing that
+                # under-extracted result forever, even after a prompt fix,
+                # unless it's distrusted here. Any real, fully-read
+                # document should yield at least one text block per page.
+                logger.warning(
+                    "Cached structured result for document %s looks under-extracted "
+                    "(%d block(s) for %d page(s)) - re-extracting instead of reusing it",
+                    document_id,
+                    len(result.text_blocks),
+                    result.pages,
+                )
+            else:
+                logger.info("Reusing cached structured result for document %s (no Gemini call)", document_id)
+                return result
 
     absolute_path = files.absolute_path_for(f"uploads/{stored_filename}")
     file_bytes = absolute_path.read_bytes()

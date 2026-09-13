@@ -152,6 +152,31 @@ Return a single JSON object matching the DocumentResult schema.
 """
 
 
+# A casually scanned/photographed page (as opposed to a proper flatbed
+# scan) frequently has no EXIF orientation tag at all - the pixels
+# themselves are simply sideways or upside down, with nothing in the file
+# to auto-correct it. Real incident this guards against: a 2-page phone-
+# photographed court ruling, each page image containing two rotated
+# scans stacked together, came back with only a single horizontal stamp
+# line ("Document signed by: ...") extracted - every word of the actual
+# (rotated) body text was silently dropped, because nothing told the
+# model to expect or handle rotation.
+_ROTATION_GUIDANCE = """
+ROTATION: A page image may be rotated relative to normal reading
+orientation - sideways (90 degrees either direction) or upside down (180
+degrees). This is common in casually photographed/scanned documents and
+carries no warning in the image file itself. Mentally rotate the image to
+the correct reading orientation and extract ALL of its content exactly as
+you would an upright page - never skip, shorten, or omit content just
+because it appears rotated, and never extract only the small portion of a
+page that happens to already be upright (e.g. a stamp, watermark, or
+signature line printed horizontally) while ignoring the larger rotated
+body text around it. If one page image actually contains more than one
+rotated photograph/scan of content stacked together, extract each one in
+full, in a sensible reading order, rather than stopping after the first.
+"""
+
+
 def build_vision_extraction_prompt(page_numbers: list[int], is_handwritten_hint: bool) -> str:
     """Prompt used when sending rendered page images to Gemini Vision."""
     handwriting_note = (
@@ -165,6 +190,7 @@ def build_vision_extraction_prompt(page_numbers: list[int], is_handwritten_hint:
     pages_note = ", ".join(str(p) for p in page_numbers)
     return f"""{_CORE_RULES}
 {_UZBEK_SCRIPT_GUIDANCE}
+{_ROTATION_GUIDANCE}
 {handwriting_note}
 You are given page images in order, corresponding to source page numbers:
 {pages_note}

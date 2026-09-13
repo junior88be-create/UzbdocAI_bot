@@ -32,6 +32,18 @@ def test_vision_prompt_includes_handwriting_caution_when_hinted():
     assert "inherently uncertain" not in prompt_without_hint
 
 
+def test_vision_prompt_includes_rotation_guidance():
+    # Regression: a phone-photographed 2-page court ruling, each page a
+    # sideways scan with no EXIF orientation tag to auto-correct it, came
+    # back with only a single horizontal stamp line extracted - the
+    # rotated body text was silently dropped because nothing told the
+    # model to expect rotated content at all.
+    prompt = build_vision_extraction_prompt(page_numbers=[1], is_handwritten_hint=False)
+    assert "rotated" in prompt.lower()
+    assert "upside down" in prompt.lower()
+    assert "never skip" in prompt.lower() or "never extract only" in prompt.lower()
+
+
 def test_vision_prompt_includes_page_numbers():
     prompt = build_vision_extraction_prompt(page_numbers=[3, 4, 5], is_handwritten_hint=False)
     assert "3, 4, 5" in prompt
