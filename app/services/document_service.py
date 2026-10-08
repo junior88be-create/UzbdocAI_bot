@@ -9,6 +9,7 @@ extraction result so repeated export requests never re-call Gemini.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Awaitable, Callable
 
 from app.schemas.document import DocumentInspection, SourceKind
@@ -128,11 +129,14 @@ class DocumentService:
         return DocumentResult.model_validate_json(raw_json)
 
 
-_service: DocumentService | None = None
+# Per-thread for the same reason as get_gemini_service (each DocumentService
+# holds that thread's Gemini client).
+_local = threading.local()
 
 
 def get_document_service() -> DocumentService:
-    global _service
-    if _service is None:
-        _service = DocumentService()
-    return _service
+    service: DocumentService | None = getattr(_local, "service", None)
+    if service is None:
+        service = DocumentService()
+        _local.service = service
+    return service

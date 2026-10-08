@@ -83,6 +83,21 @@ def build_dispatcher() -> Dispatcher:
     return dispatcher
 
 
+async def _cleanup_loop() -> None:
+    """Hourly retention cleanup for TASK_BACKEND=inline, standing in for the
+    Celery beat schedule (see app/worker/celery_app.py) when there is no
+    Celery. run_cleanup never raises past its own logging here - one failed
+    pass must not kill the loop for the rest of the process lifetime."""
+    from app.services.cleanup_service import run_cleanup
+
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            await run_cleanup()
+        except Exception:
+            logger.exception("Scheduled cleanup failed")
+
+
 async def _run_health_server(settings) -> None:
     config = uvicorn.Config(
         health_app,
@@ -151,7 +166,10 @@ async def main() -> None:
 
     logger.info("Starting Document AI Bot (%s mode)", "webhook" if settings.webhook_url else "polling")
 
-    await asyncio.gather(bot_task, _run_health_server(settings))
+    tasks = [bot_task, _run_health_server(settings)]
+    if settings.task_backend == "inline":
+        tasks.append(_cleanup_loop())
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":

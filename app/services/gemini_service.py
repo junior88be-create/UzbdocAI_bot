@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from google import genai
 from google.genai import types
@@ -174,11 +175,17 @@ class GeminiService:
             raise GeminiServiceError("Gemini кутилмаган жавоб формати қайтарди.") from exc
 
 
-_service: GeminiService | None = None
+# One client per thread, not one per process: with TASK_BACKEND=inline the bot
+# thread (voice transcription) and the inline worker thread (document jobs,
+# each under its own asyncio.run event loop) would otherwise share one async
+# HTTP client across event loops. In the Celery setup there is only ever one
+# thread per process, so this behaves exactly like the old singleton.
+_local = threading.local()
 
 
 def get_gemini_service() -> GeminiService:
-    global _service
-    if _service is None:
-        _service = GeminiService()
-    return _service
+    service: GeminiService | None = getattr(_local, "service", None)
+    if service is None:
+        service = GeminiService()
+        _local.service = service
+    return service

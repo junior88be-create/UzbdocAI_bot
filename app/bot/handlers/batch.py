@@ -51,6 +51,7 @@ from app.database.repositories import (
     ProcessingJobRepository,
 )
 from app.utils import files
+from app.worker.dispatch import enqueue_process_document
 
 logger = logging.getLogger(__name__)
 
@@ -271,13 +272,11 @@ async def handle_batch_format(callback: CallbackQuery, db_user_id: str) -> None:
             job_ids.append(job.id)
         await batch_repo.set_status(batch_id, BatchStatus.PROCESSING, requested_format=db_format)
 
-    from app.worker.tasks import process_document_task
-
     for document, job_id in zip(documents, job_ids, strict=True):
         # auto_confirm_review=True: batch mode never pauses for interactive
         # OCR review (see app/bot/handlers/review.py docstring) - any
         # uncertain content is instead called out in the final summary.
-        process_document_task.delay(document.id, job_id, action, True)
+        enqueue_process_document(document.id, job_id, action, True)
 
     await safe_edit_text(message, _batch_progress_text(0, len(documents)))
 

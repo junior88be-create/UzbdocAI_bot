@@ -42,6 +42,7 @@ from app.services.review_service import (
     refresh,
 )
 from app.utils import files
+from app.worker.dispatch import enqueue_process_document
 
 logger = logging.getLogger(__name__)
 
@@ -276,9 +277,7 @@ async def _dispatch_after_review(
         job = await job_repo.create(document_id, DBOutputFormat(action))
         new_job_id = job.id
 
-    from app.worker.tasks import process_document_task
-
-    process_document_task.delay(document_id, new_job_id, action)
+    enqueue_process_document(document_id, new_job_id, action)
 
     await safe_edit_text(message, f"📄 Ҳужжат: {filename}\n\n✅ Кўрик тасдиқланди - натижа яратилмоқда...")
 

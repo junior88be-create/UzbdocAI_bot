@@ -244,6 +244,7 @@ Copy `.env.example` to `.env` and fill in real values. Never commit `.env`.
 | `GEMINI_REQUEST_TIMEOUT_SECONDS` / `GEMINI_MAX_RETRIES` | Resilience tuning |
 | `DATABASE_URL` | `postgresql+asyncpg://...` for the app; Alembic swaps in `psycopg2` automatically |
 | `REDIS_URL` | Celery broker/result backend |
+| `TASK_BACKEND` | `celery` (default, Docker/Railway) or `inline` - the bot runs document jobs itself in a background thread and the hourly cleanup in an asyncio loop, so no Redis/Celery is needed. Used by the plain Windows install (`scripts/windows_setup.ps1`, see `HOME_INSTALL_uz.md`) |
 | `MAX_FILE_SIZE_MB` | Upload size cap (also capped at Telegram Bot API's own 20MB `getFile` limit unless you run a self-hosted Bot API server) |
 | `FILE_RETENTION_HOURS` | How long uploaded/generated files live before cleanup deletes them |
 | `MAX_PDF_PAGES` | Hard cap on pages per PDF (cost + abuse control) |

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -76,6 +76,12 @@ class Settings(BaseSettings):
 
     # --- Redis / Celery ---
     redis_url: str = Field(default="redis://localhost:6379/0")
+    # "celery" (default): documents are processed by a separate Celery worker
+    # over Redis - the Docker/Railway setup. "inline": the bot process runs
+    # them itself in a background thread and also runs the hourly cleanup, so
+    # neither Redis nor Celery is needed - for a plain single-machine install
+    # (e.g. Windows without Docker). See app/worker/dispatch.py.
+    task_backend: Literal["celery", "inline"] = Field(default="celery")
 
     # --- File handling ---
     max_file_size_mb: int = Field(default=50)

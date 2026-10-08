@@ -30,6 +30,7 @@ from app.database.repositories import (
     ProcessingJobRepository,
 )
 from app.utils import files
+from app.worker.dispatch import enqueue_process_document
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +97,7 @@ async def handle_document_action(callback: CallbackQuery, db_user_id: str, state
         job = await job_repo.create(document_id, db_format)
         job_id = job.id
 
-    from app.worker.tasks import process_document_task
-
-    process_document_task.delay(document_id, job_id, action)
+    enqueue_process_document(document_id, job_id, action)
 
     status_text = (
         f"📄 Ҳужжат: {document.original_filename}\n"
