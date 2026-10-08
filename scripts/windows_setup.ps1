@@ -18,6 +18,12 @@ function Find-Python312 {
     if ($LASTEXITCODE -eq 0 -and $p) { return $p.Trim() }
     return $null
 }
+function Find-FreePort($start) {
+    foreach ($p in $start..($start + 50)) {
+        if (-not (Get-NetTCPConnection -State Listen -LocalPort $p -ErrorAction SilentlyContinue)) { return $p }
+    }
+    return $start
+}
 function Find-Psql {
     $c = Get-ChildItem "C:\Program Files\PostgreSQL\*\bin\psql.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
     if ($c) { return $c.FullName }
@@ -92,6 +98,7 @@ if (-not (Test-Path ".env")) {
         "ADMIN_TELEGRAM_IDS=$adminIds",
         "TASK_BACKEND=inline",
         "DATABASE_URL=postgresql+asyncpg://doc_ai:$appDbPass@localhost:5432/doc_ai_bot",
+        "HEALTH_PORT=$(Find-FreePort 8081)",
         "STORAGE_ROOT=storage",
         "FREE_REQUESTS_PER_MONTH=3",
         "LOG_LEVEL=INFO"
