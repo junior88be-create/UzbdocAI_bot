@@ -59,8 +59,9 @@ $pgSuperPass = $null
 if (-not $psql) {
     Write-Host "PostgreSQL 16 o'rnatilmoqda (winget)..."
     $pgSuperPass = Read-Host "PostgreSQL 'postgres' admin paroli uchun o'zingiz parol o'ylab toping (yozib qo'ying)"
+    Write-Host "Bu 3-10 daqiqa olishi mumkin va jim ishlaydi - qotib qolgandek tuyulsa ham kuting. 10 daqiqadan oshsa Ctrl+C bosing, PostgreSQL 16 ni https://www.postgresql.org/download/windows/ dan qo'lda o'rnating va skriptni qayta ishga tushiring." -ForegroundColor Yellow
     winget install -e --id PostgreSQL.PostgreSQL.16 --silent --accept-package-agreements --accept-source-agreements `
-        --override "--mode unattended --unattendedmodeui none --superpassword $pgSuperPass --serverport 5432" | Out-Null
+        --override "--mode unattended --unattendedmodeui none --superpassword $pgSuperPass --serverport 5432"
     $psql = Find-Psql
 }
 if (-not $psql) {
