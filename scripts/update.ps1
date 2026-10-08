@@ -1,87 +1,81 @@
-# Document AI Bot - pull the latest version from GitHub and restart (Windows install).
-# Run in an *Administrator* PowerShell:
-#     powershell -ExecutionPolicy Bypass -File scripts\update.ps1
-# Add -Schedule once to ALSO update automatically every night at 04:00:
-#     powershell -ExecutionPolicy Bypass -File scripts\update.ps1 -Schedule
-#
-# Works whether the folder came from `git clone` or from the zip (a zip copy is
-# converted to a git checkout in place). Your .env, .venv, storage\ and bot.log
-# are not tracked by git, so they are never touched. Tracked files are reset to
-# exactly what is on GitHub - do not hand-edit code in this folder.
-# ASCII-only on purpose so it runs the same under any Windows code page.
-
-param([switch]$Schedule)
-
+# Document AI Bot: GitHub'dan yangi kodni olish va botni qayta ishga tushirish.
+# Task Scheduler har 5 daqiqada chaqiradi. Qo'lda:  powershell -ExecutionPolicy Bypass -File .\scripts\update.ps1
+# Yangi kod tekshiruvdan o'tmasa yoki baza migratsiyasi xato bersa - avvalgi
+# ishlayotgan versiyaga qaytiladi va rad etilgan versiya qayta sinalmaydi.
+# .env, .venv, storage\ va jurnallar git'da yo'q - ularga tegilmaydi.
 $ErrorActionPreference = "Continue"
-$root = Split-Path -Parent $PSScriptRoot
-Set-Location $root
-$repoUrl  = "https://github.com/junior88be-create/UzbdocAI_bot.git"
-$taskName = "UzbdocAI_bot"
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$dir = Split-Path -Parent $scriptDir
+Set-Location $dir
+$logFile = Join-Path $dir "update.log"
+function Log($t) { "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $t" | Out-File -FilePath $logFile -Append -Encoding utf8 }
 
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Write-Host "Please run this in an Administrator PowerShell." -ForegroundColor Red
-    exit 1
-}
+# Bir vaqtda ikkita yangilanish ishlamasin
+$lock = Join-Path $dir ".update.lock"
+if ((Test-Path $lock) -and ((Get-Date) - (Get-Item $lock).LastWriteTime).TotalMinutes -lt 15) { exit 0 }
+New-Item -ItemType File -Path $lock -Force | Out-Null
+try {
+    $git = (Get-Command git -ErrorAction SilentlyContinue).Source
+    if (-not $git) { Log "git topilmadi - yangilanish o'tkazib yuborildi"; exit 1 }
 
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    Write-Host "Installing Git via winget..."
-    winget install -e --id Git.Git --silent --accept-package-agreements --accept-source-agreements
-    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-}
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    Write-Host "Git not found. Install it from https://git-scm.com/download/win and re-run." -ForegroundColor Red
-    exit 1
-}
+    & git fetch -q origin main 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Log "GitHub'ga ulanib bo'lmadi (internet?)"; exit 1 }
+    $old = (& git rev-parse HEAD).Trim()
+    $new = (& git rev-parse origin/main).Trim()
+    if ($old -eq $new) { exit 0 }  # yangi kod yo'q
+    $badFile = Join-Path $dir ".update_bad"
+    if ((Test-Path $badFile) -and ((Get-Content $badFile -Raw).Trim() -eq $new)) { exit 0 }  # bu versiya avval rad etilgan
 
-# The folder may be owned by a different Windows user than this admin shell.
-git config --global --add safe.directory ($root -replace '\\', '/')
+    Log "Yangi versiya: $($new.Substring(0,7)) (eski: $($old.Substring(0,7)))"
+    $reqChanged = (& git diff --name-only $old $new) -contains "requirements.txt"
+    & git reset -q --hard $new   # .env va holat fayllari (git'da yo'q) tegmaydi
 
-if (-not (Test-Path ".git")) {
-    Write-Host "Converting this folder to a git checkout..."
-    git init -q
-    git remote add origin $repoUrl
-}
-
-$before = (git rev-parse --short HEAD 2>$null)
-git fetch origin main
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Could not reach GitHub - bot left running on the current version." -ForegroundColor Red
-    exit 1
-}
-$latest = (git rev-parse --short origin/main)
-if ($before -eq $latest) {
-    Write-Host "Already up to date ($latest)." -ForegroundColor Green
-} else {
-    Write-Host "Updating $before -> $latest ..."
-    git reset --hard origin/main
-
-    Write-Host "Stopping the bot..."
-    Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object { $_.ExecutablePath -and $_.ExecutablePath -like "$root\.venv\*" } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-
-    & ".venv\Scripts\python.exe" -m pip install -r requirements.txt
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "pip install failed - bot NOT restarted. See output above." -ForegroundColor Red
-        exit 1
+    $py = Join-Path $dir ".venv\Scripts\python.exe"
+    $alembic = Join-Path $dir ".venv\Scripts\alembic.exe"
+    if ($reqChanged) {
+        Log "requirements.txt o'zgargan - kutubxonalar yangilanmoqda"
+        & $py -m pip install -q -r requirements.txt 2>&1 | Out-Null
     }
-    & ".venv\Scripts\alembic.exe" upgrade head
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Database migration failed - bot NOT restarted. See output above." -ForegroundColor Red
+
+    # Tekshiruv: sintaksis va importlar (bot ishga tushmaydi). Har qanday xato = muvaffaqiyatsiz.
+    $ok = $false
+    try {
+        if (-not (Test-Path $py)) { throw "Python (.venv) topilmadi" }
+        $files = & git ls-files "*.py"
+        $global:LASTEXITCODE = 1
+        & $py -m py_compile @files 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "sintaksis xatosi" }
+        $global:LASTEXITCODE = 1
+        & $py -c "import app.main" 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "import xatosi" }
+        $ok = $true
+    } catch {
+        Log "Tekshiruv: $_"
+    }
+    if (-not $ok) {
+        Log "XATO: yangi kod tekshiruvdan o'tmadi - eski versiyaga qaytildi (keyingi versiyagacha kutiladi)"
+        & git reset -q --hard $old
+        $new | Out-File -FilePath $badFile -Encoding ascii -NoNewline
+        if ($reqChanged) { & $py -m pip install -q -r requirements.txt 2>&1 | Out-Null }
         exit 1
     }
 
-    Start-ScheduledTask -TaskName $taskName
-    Write-Host "Bot restarted on $latest." -ForegroundColor Green
+    # Botni to'xtatib, baza migratsiyasini qo'llab, qayta ishga tushirish
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptDir "stop_bot.ps1") | Out-Null
+    Start-Sleep -Seconds 3
+    $global:LASTEXITCODE = 1
+    & $alembic upgrade head 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
+    if ($LASTEXITCODE -ne 0) {
+        Log "XATO: baza migratsiyasi bajarilmadi - eski versiyaga qaytildi"
+        & git reset -q --hard $old
+        $new | Out-File -FilePath $badFile -Encoding ascii -NoNewline
+        if ($reqChanged) { & $py -m pip install -q -r requirements.txt 2>&1 | Out-Null }
+        Start-ScheduledTask -TaskName "UzbdocAI_bot" -ErrorAction SilentlyContinue
+        exit 1
+    }
+    Start-ScheduledTask -TaskName "UzbdocAI_bot" -ErrorAction SilentlyContinue
+    Log "Yangilandi va bot qayta ishga tushirildi: $($new.Substring(0,7))"
 }
-
-if ($Schedule) {
-    $act = New-ScheduledTaskAction -Execute "powershell.exe" `
-        -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$root\scripts\update.ps1`"" -WorkingDirectory $root
-    $trg = New-ScheduledTaskTrigger -Daily -At 4:00AM
-    $prn = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-    Register-ScheduledTask -TaskName "UzbdocAI_update" -Action $act -Trigger $trg -Principal $prn -Force | Out-Null
-    Write-Host "Nightly auto-update registered (04:00). Remove with: Unregister-ScheduledTask -TaskName UzbdocAI_update -Confirm:`$false"
+finally {
+    Remove-Item $lock -Force -ErrorAction SilentlyContinue
 }

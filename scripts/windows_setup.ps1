@@ -1,94 +1,89 @@
-# Document AI Bot - native Windows install (NO Docker Desktop, NO Redis, NO Celery).
-# Run in an *Administrator* PowerShell:   powershell -ExecutionPolicy Bypass -File scripts\windows_setup.ps1
-# ASCII-only on purpose so it runs the same under any Windows code page.
-#
-# What it does (safe to re-run):
-#   1. finds/installs Python 3.12 and PostgreSQL 16 (via winget)
-#   2. creates the database + user, a virtualenv, installs requirements
-#   3. writes .env (TASK_BACKEND=inline: the bot processes documents itself)
-#   4. runs the database migrations
-#   5. registers a Windows Scheduled Task that starts the bot at boot and
-#      restarts it if it dies, then starts it now
-#   6. stops the PC from going to sleep while plugged in
-
+# Document AI Bot - Windows'da (Docker Desktop'siz, Redis/Celery'siz) doimiy ishlaydigan qilib o'rnatish.
+# Administrator PowerShell'da (loyiha papkasida):
+#   powershell -ExecutionPolicy Bypass -File .\scripts\windows_setup.ps1
+# Qayta ishga tushirish xavfsiz: mavjud .env va baza saqlanadi.
+# Skript faqat ASCII: istalgan Windows kod sahifasida bir xil ishlaydi.
 $ErrorActionPreference = "Continue"
-$root = Split-Path -Parent $PSScriptRoot
-Set-Location $root
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$dir = Split-Path -Parent $scriptDir
+Set-Location $dir
+$TaskName = "UzbdocAI_bot"
+$UpdateTask = "UzbdocAI_bot_Update"
+$repoUrl = "https://github.com/junior88be-create/UzbdocAI_bot.git"
 
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Write-Host "Please run this in an Administrator PowerShell." -ForegroundColor Red
-    exit 1
-}
-
+function Step($t) { Write-Host "`n==> $t" -ForegroundColor Cyan }
+function New-RandomPassword { -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ }) }
 function Find-Python312 {
     $p = & py -3.12 -c "import sys; print(sys.executable)" 2>$null
     if ($LASTEXITCODE -eq 0 -and $p) { return $p.Trim() }
     return $null
 }
-
 function Find-Psql {
     $c = Get-ChildItem "C:\Program Files\PostgreSQL\*\bin\psql.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
     if ($c) { return $c.FullName }
     return $null
 }
+function Refresh-Path { $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User") }
 
-function New-RandomPassword {
-    -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "PowerShell'ni Administrator sifatida oching (PostgreSQL o'rnatish va Windows yoqilganda ishga tushirish uchun kerak)." -ForegroundColor Red
+    exit 1
 }
 
-# ---- 1. Python 3.12 ----
+# 1. Python 3.12
+Step "Python 3.12 tekshirilmoqda"
 $py = Find-Python312
 if (-not $py) {
-    Write-Host "Installing Python 3.12 via winget..."
-    winget install -e --id Python.Python.3.12 --scope machine --silent --accept-package-agreements --accept-source-agreements
+    Write-Host "Python 3.12 o'rnatilmoqda (winget)..."
+    winget install -e --id Python.Python.3.12 --scope machine --silent --accept-package-agreements --accept-source-agreements | Out-Null
+    Refresh-Path
     $py = Find-Python312
 }
 if (-not $py) {
-    Write-Host "Python 3.12 not found. Install it from https://www.python.org/downloads/ (tick 'Add to PATH'), then re-run." -ForegroundColor Red
+    Write-Host "Python 3.12 topilmadi. https://www.python.org/downloads/ dan o'rnating ('Add python.exe to PATH' ni belgilang), keyin skriptni qayta ishga tushiring." -ForegroundColor Red
     exit 1
 }
 Write-Host "Python: $py"
 
-# ---- 2. PostgreSQL ----
+# 2. PostgreSQL
+Step "PostgreSQL tekshirilmoqda"
 $psql = Find-Psql
-$envExists = Test-Path ".env"
 $pgSuperPass = $null
 if (-not $psql) {
-    Write-Host "Installing PostgreSQL 16 via winget..."
-    $pgSuperPass = Read-Host "Choose a password for the PostgreSQL 'postgres' admin account (write it down)"
+    Write-Host "PostgreSQL 16 o'rnatilmoqda (winget)..."
+    $pgSuperPass = Read-Host "PostgreSQL 'postgres' admin paroli uchun o'zingiz parol o'ylab toping (yozib qo'ying)"
     winget install -e --id PostgreSQL.PostgreSQL.16 --silent --accept-package-agreements --accept-source-agreements `
-        --override "--mode unattended --unattendedmodeui none --superpassword $pgSuperPass --serverport 5432"
+        --override "--mode unattended --unattendedmodeui none --superpassword $pgSuperPass --serverport 5432" | Out-Null
     $psql = Find-Psql
 }
 if (-not $psql) {
-    Write-Host "PostgreSQL not found. Install it from https://www.postgresql.org/download/windows/ (keep port 5432), then re-run." -ForegroundColor Red
+    Write-Host "PostgreSQL topilmadi. https://www.postgresql.org/download/windows/ dan o'rnating (5432 port), keyin skriptni qayta ishga tushiring." -ForegroundColor Red
     exit 1
 }
 Write-Host "psql: $psql"
 
-# ---- 3. .env + database user/db (first run only) ----
-if (-not $envExists) {
-    if (-not $pgSuperPass) { $pgSuperPass = Read-Host "PostgreSQL 'postgres' admin password" }
+# 3. .env va baza (faqat birinchi marta)
+Step ".env va baza"
+if (-not (Test-Path ".env")) {
+    if (-not $pgSuperPass) { $pgSuperPass = Read-Host "PostgreSQL 'postgres' admin paroli" }
     $appDbPass = New-RandomPassword
     $env:PGPASSWORD = $pgSuperPass
-
     $role = & $psql -U postgres -h localhost -tAc "SELECT 1 FROM pg_roles WHERE rolname='doc_ai'"
     if ($role -ne "1") {
-        & $psql -U postgres -h localhost -c "CREATE ROLE doc_ai LOGIN PASSWORD '$appDbPass'"
+        & $psql -U postgres -h localhost -c "CREATE ROLE doc_ai LOGIN PASSWORD '$appDbPass'" | Out-Null
     } else {
-        & $psql -U postgres -h localhost -c "ALTER ROLE doc_ai WITH PASSWORD '$appDbPass'"
+        & $psql -U postgres -h localhost -c "ALTER ROLE doc_ai WITH PASSWORD '$appDbPass'" | Out-Null
     }
     $db = & $psql -U postgres -h localhost -tAc "SELECT 1 FROM pg_database WHERE datname='doc_ai_bot'"
     if ($db -ne "1") {
-        & $psql -U postgres -h localhost -c "CREATE DATABASE doc_ai_bot OWNER doc_ai"
+        & $psql -U postgres -h localhost -c "CREATE DATABASE doc_ai_bot OWNER doc_ai" | Out-Null
     }
     Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
 
-    Write-Host ""
-    $botToken  = Read-Host "BOT_TOKEN"
+    $botToken  = Read-Host "BOT_TOKEN (BotFather'dan)"
     $geminiKey = Read-Host "GEMINI_API_KEY"
-    $adminIds  = Read-Host "Your numeric Telegram ID (admin; comma-separate for several)"
+    $adminIds  = Read-Host "O'zingizning Telegram ID raqamingiz (admin; bir nechta bo'lsa vergul bilan)"
     $lines = @(
         "BOT_TOKEN=$botToken",
         "GEMINI_API_KEY=$geminiKey",
@@ -102,53 +97,87 @@ if (-not $envExists) {
         "LOG_LEVEL=INFO"
     )
     Set-Content -Path ".env" -Value $lines -Encoding ASCII
-    Write-Host ".env written."
+    Write-Host ".env yozildi."
 } else {
-    Write-Host ".env already exists - keeping it (delete it to redo database/user setup)."
+    Write-Host ".env bor - o'zgartirilmadi (bazani qaytadan sozlash uchun .env ni o'chirib, skriptni qayta ishga tushiring)."
 }
 
-# ---- 4. virtualenv + dependencies ----
-if (-not (Test-Path ".venv\Scripts\python.exe")) {
-    & $py -m venv .venv
-}
-& ".venv\Scripts\python.exe" -m pip install --upgrade pip
-& ".venv\Scripts\python.exe" -m pip install -r requirements.txt
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "pip install failed - see the output above." -ForegroundColor Red
-    exit 1
-}
+# 4. Virtual muhit va kutubxonalar
+Step "Kutubxonalar o'rnatilmoqda (2-5 daqiqa)"
+if (-not (Test-Path ".venv\Scripts\python.exe")) { & $py -m venv .venv }
+& ".venv\Scripts\python.exe" -m pip install --upgrade pip -q
+& ".venv\Scripts\python.exe" -m pip install -r requirements.txt -q
+if ($LASTEXITCODE -ne 0) { Write-Host "Kutubxonalarni o'rnatib bo'lmadi" -ForegroundColor Red; exit 1 }
+Write-Host "Tayyor"
 
-# ---- 5. migrations ----
+# 5. Baza migratsiyalari
+Step "Baza tayyorlanmoqda"
 & ".venv\Scripts\alembic.exe" upgrade head
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "Database migration failed - check that the PostgreSQL service is running and .env DATABASE_URL is right." -ForegroundColor Red
+    Write-Host "Migratsiya bajarilmadi - PostgreSQL xizmati ishlayotganini va .env dagi DATABASE_URL to'g'riligini tekshiring." -ForegroundColor Red
     exit 1
 }
 
-# ---- 6. auto-start at boot + auto-restart ----
-$taskName = "UzbdocAI_bot"
-$action    = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$root\scripts\run_bot.bat`"" -WorkingDirectory $root
-$trigger   = New-ScheduledTaskTrigger -AtStartup
-$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-$settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
-    -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-Start-ScheduledTask -TaskName $taskName
-
-# ---- 7. never sleep while plugged in ----
-powercfg /change standby-timeout-ac 0
-powercfg /change hibernate-timeout-ac 0
-
-Write-Host ""
-Write-Host "Waiting 25s for the bot to start..."
-Start-Sleep -Seconds 25
-if (Test-Path "bot.log") { Get-Content "bot.log" -Tail 12 }
-try {
-    $r = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:8081/health" -TimeoutSec 5
-    Write-Host "Health check: $($r.StatusCode) $($r.Content)" -ForegroundColor Green
-} catch {
-    Write-Host "Health check failed - look at bot.log in $root" -ForegroundColor Yellow
+# 6. Git (GitHub'dan avtomatik yangilanish uchun) - zip'dan ochilgan papka ham git papkaga aylanadi
+Step "Git sozlanmoqda"
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Host "Git o'rnatilmoqda (winget)..."
+    winget install --id Git.Git -e --silent --accept-package-agreements --accept-source-agreements | Out-Null
+    Refresh-Path
 }
-Write-Host ""
-Write-Host "Done. Log: $root\bot.log   Stop: Stop-ScheduledTask -TaskName $taskName   Start: Start-ScheduledTask -TaskName $taskName"
+$gitOk = $false
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    git config --global --add safe.directory ($dir -replace '\\', '/')
+    if (-not (Test-Path ".git")) { git init -q; git remote add origin $repoUrl }
+    git remote set-url origin $repoUrl
+    git fetch -q origin main 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        git reset -q --hard origin/main   # .env, .venv, storage git'da yo'q - tegilmaydi
+        $gitOk = $true
+    } else {
+        Write-Host "GitHub'ga ulanib bo'lmadi - avtomatik yangilanish o'chiq. Internetni tekshirib, skriptni qayta ishga tushiring." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "Git topilmadi - avtomatik yangilanish o'chiq (bot baribir ishlaydi)." -ForegroundColor Yellow
+}
+
+# 7. Avtomatik ishga tushirish (Windows yoqilganda, hech kim kirmasa ham)
+Step "Avtomatik ishga tushirish sozlanmoqda"
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptDir "stop_bot.ps1") | Out-Null
+$user = "$env:USERDOMAIN\$env:USERNAME"
+$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$scriptDir\run_hidden.vbs`"" -WorkingDirectory $dir
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType S4U -RunLevel Limited
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
+    -Principal $principal -Description "Document AI Telegram boti" -Force | Out-Null
+Write-Host "Vazifa '$TaskName' yaratildi: Windows yoqilganda (kirish shart emas)"
+
+if ($gitOk) {
+    $upAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$scriptDir\run_update_hidden.vbs`"" -WorkingDirectory $dir
+    $upTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
+        -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
+    Register-ScheduledTask -TaskName $UpdateTask -Action $upAction -Trigger $upTrigger -Settings $settings `
+        -Principal $principal -Description "Document AI bot: GitHub'dan yangilanish" -Force | Out-Null
+    Write-Host "Har 5 daqiqada GitHub'dan yangilanish tekshiriladi (jurnal: update.log)"
+}
+
+powercfg /change standby-timeout-ac 0 | Out-Null
+powercfg /change hibernate-timeout-ac 0 | Out-Null
+
+# 8. Hozir ishga tushirish
+Step "Bot ishga tushirilmoqda"
+Start-ScheduledTask -TaskName $TaskName
+$started = $false
+foreach ($i in 1..12) {  # 60 soniyagacha kutamiz
+    Start-Sleep -Seconds 5
+    $log = Get-Content "bot.log" -Tail 60 -ErrorAction SilentlyContinue
+    if ($log -match "Run polling") { $started = $true; break }
+}
+$log | Select-Object -Last 8 | ForEach-Object { Write-Host $_ }
+if ($started) {
+    Write-Host "`nBot ishlayapti! Kompyuter yoqilganda u o'zi ishga tushadi, yangilanishlar GitHub'dan o'zi keladi." -ForegroundColor Green
+} else {
+    Write-Host "`nBot hali ishga tushmadi - bir daqiqadan so'ng bot.log ni tekshiring." -ForegroundColor Yellow
+}

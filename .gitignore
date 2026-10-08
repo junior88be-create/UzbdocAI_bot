@@ -22,3 +22,8 @@ storage/outputs/*
 .DS_Store
 .idea/
 .vscode/
+
+# Home-server updater state
+.update.lock
+.update_bad
+update.log
